@@ -124,20 +124,27 @@ body {
 .omp-transcript-empty { margin-top: 40px; }
 
 /* ── Messages ───────────────────────────────────────── */
-.omp-msg { margin-bottom: 16px; max-width: 95%; }
-.omp-msg-user { margin-left: auto; text-align: right; }
-.omp-msg-assistant, .omp-msg-system { margin-right: auto; }
-.omp-msg-role { font-size: 11px; font-weight: 600; color: var(--omp-muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px; }
-.omp-msg-content { font-size: 13px; line-height: 1.6; padding: 8px 12px; border-radius: 8px; word-wrap: break-word; overflow-wrap: break-word; }
-.omp-msg-user .omp-msg-content { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 8px 8px 2px 8px; display: inline-block; text-align: left; }
-.omp-msg-assistant .omp-msg-content, .omp-msg-system .omp-msg-content { background: var(--vscode-textBlockQuote-background, rgba(128,128,128,0.08)); border-radius: 8px 8px 8px 2px; }
-.omp-msg-streaming .omp-msg-content { border-left: 2px solid var(--omp-accent); }
-.omp-streaming-dot { display: inline-block; width: 6px; height: 6px; background: var(--omp-accent); border-radius: 50%; animation: pulse 1s ease-in-out infinite; vertical-align: middle; margin-left: 4px; }
-@keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
-
-/* Error messages */
-.omp-msg-error .omp-msg-content { background: rgba(244, 71, 71, 0.08); border: 1px solid var(--omp-error); color: var(--omp-error); }
-.omp-msg-role-error { color: var(--omp-error) !important; }
+.omp-turn { margin-bottom: 16px; }
+.omp-turn-user { display: flex; justify-content: flex-end; }
+.omp-turn-agent { max-width: 95%; }
+.omp-user-bubble {
+  background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+  border-radius: 8px 8px 2px 8px; display: inline-block; padding: 8px 12px;
+  font-size: 13px; line-height: 1.5; max-width: 80%;
+}
+.omp-agent-text {
+  font-size: 13px; line-height: 1.6; padding: 0; word-wrap: break-word; overflow-wrap: break-word;
+}
+.omp-agent-text.omp-streaming { border-left: 2px solid var(--omp-accent); padding-left: 10px; }
+.omp-status-block {
+  display: flex; align-items: center; gap: 6px; padding: 6px 0;
+  font-size: 12px; color: var(--omp-muted);
+}
+.omp-error-block {
+  display: flex; align-items: center; gap: 6px; padding: 8px 10px;
+  font-size: 12px; color: var(--omp-error); background: rgba(244,71,71,0.06);
+  border-radius: 4px; border: 1px solid var(--omp-error);
+}
 
 /* Message action bar */
 .omp-msg-actions { display: flex; gap: 4px; margin-top: 4px; }

@@ -9,6 +9,7 @@ import {
   setSelection,
   setRuntime,
   setTranscript,
+  setTurnTranscript,
   upsertMessage,
   updateMessage,
   appendMessage,
@@ -17,6 +18,8 @@ import {
   getState,
   type TranscriptMessage,
 } from "../state/store";
+import { processTurnMessage } from "../state/turnReducer";
+import { createEmptyTurnTranscript } from "../state/turns";
 
 export function useMessageHandler() {
   useEffect(() => {
@@ -28,6 +31,18 @@ export function useMessageHandler() {
     function handleMessage(event: MessageEvent) {
       const msg = event.data;
       if (!msg || typeof msg.type !== "string") return;
+
+      // Process through turn-based reducer for all transcript-relevant messages
+      const turnTypes = new Set([
+        "chat.messagesLoaded", "chat.message", "chat.delta", "runtime.frame", "error",
+      ]);
+      if (turnTypes.has(msg.type)) {
+        const { turnTranscript } = getState();
+        const newTurnTranscript = processTurnMessage(turnTranscript, msg);
+        if (newTurnTranscript !== turnTranscript) {
+          setTurnTranscript(newTurnTranscript);
+        }
+      }
 
       switch (msg.type) {
         case "sessions.state":
@@ -45,6 +60,7 @@ export function useMessageHandler() {
         case "session.launchState":
           if (msg.state.kind === "launching") {
             clearTranscript();
+            setTurnTranscript(createEmptyTurnTranscript());
             setSelection({ kind: "launching", mode: msg.state.mode });
             setState({ screen: "active" });
           } else if (msg.state.kind === "failed") {

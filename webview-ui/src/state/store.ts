@@ -75,6 +75,9 @@ export type RuntimeState =
   | { kind: "streaming"; sessionPath: string; model?: unknown; thinking?: string }
   | { kind: "error"; message: string };
 
+import type { TurnTranscriptState } from "./turns";
+import { createEmptyTurnTranscript } from "./turns";
+
 // ============================================================================
 // Store
 // ============================================================================
@@ -85,6 +88,7 @@ interface AppState {
   selection: SelectionState;
   runtime: RuntimeState;
   transcript: TranscriptMessage[];
+  turnTranscript: TurnTranscriptState;
   historySearch: string;
 }
 
@@ -94,6 +98,7 @@ const initialState: AppState = {
   selection: { kind: "new", draft: "" },
   runtime: { kind: "disconnected" },
   transcript: [],
+  turnTranscript: createEmptyTurnTranscript(),
   historySearch: "",
 };
 
@@ -136,6 +141,10 @@ export function setRuntime(runtime: RuntimeState) {
 
 export function setTranscript(messages: TranscriptMessage[]) {
   setState({ transcript: messages });
+}
+
+export function setTurnTranscript(turnTranscript: TurnTranscriptState) {
+  setState({ turnTranscript });
 }
 
 export function appendMessage(msg: TranscriptMessage) {

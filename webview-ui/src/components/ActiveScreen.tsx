@@ -2,19 +2,19 @@ import { useEffect, useRef } from "react";
 import { useAppState } from "../state/store";
 import { getVSCodeAPI } from "../vscode";
 import { Composer } from "./Composer";
-import { MessageBubble } from "./MessageBubble";
+import { TurnView } from "./TurnView";
 
 export function ActiveScreen() {
-  const { selection, transcript } = useAppState();
+  const { selection, turnTranscript } = useAppState();
   const transcriptRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll to bottom on new content
   useEffect(() => {
     const el = transcriptRef.current;
     if (el) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [transcript]);
+  }, [turnTranscript.turns]);
 
   function handleSend(content: string) {
     const vscode = getVSCodeAPI();
@@ -44,12 +44,12 @@ export function ActiveScreen() {
     <>
       <div className="omp-active">
         <div className="omp-transcript" ref={transcriptRef}>
-          {transcript.length === 0 ? (
+          {turnTranscript.turns.length === 0 ? (
             <div className="omp-state-msg omp-transcript-empty">
               Session active. Send a message to begin.
             </div>
           ) : (
-            transcript.map((msg) => <MessageBubble key={msg.id} message={msg} />)
+            turnTranscript.turns.map((turn) => <TurnView key={turn.id} turn={turn} />)
           )}
         </div>
       </div>
