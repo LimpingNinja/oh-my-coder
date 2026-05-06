@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import "@vscode/codicons/dist/codicon.css";
 import "./styles/index.css";
 
 const container = document.getElementById("omp-app");

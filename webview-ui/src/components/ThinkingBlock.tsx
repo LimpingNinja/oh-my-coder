@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Icon } from "./Icon";
 
 interface ThinkingBlockProps {
   content: string;
@@ -8,16 +11,22 @@ interface ThinkingBlockProps {
 export function ThinkingBlock({ content, defaultOpen = false }: ThinkingBlockProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
+  const preview = useMemo(() => {
+    const firstLine = content.split("\n")[0] || "";
+    return firstLine.length > 80 ? firstLine.slice(0, 80) + "…" : firstLine;
+  }, [content]);
+
   return (
     <div className="omp-thinking-block">
       <button className="omp-thinking-header" onClick={() => setIsOpen(!isOpen)}>
-        <span className={`omp-thinking-chevron${isOpen ? " open" : ""}`}>▶</span>
-        <span className="omp-thinking-icon">💡</span>
-        <span className="omp-thinking-label">Thinking</span>
+        <Icon name={isOpen ? "chevron-down" : "chevron-right"} className="omp-thinking-chevron" />
+        <Icon name="lightbulb" className="omp-thinking-icon" />
+        <span className="omp-thinking-label">Reasoning</span>
+        {!isOpen && <span className="omp-thinking-preview">{preview}</span>}
       </button>
       {isOpen && (
         <div className="omp-thinking-content">
-          {content}
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
         </div>
       )}
     </div>

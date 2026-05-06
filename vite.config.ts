@@ -32,6 +32,8 @@ export default defineConfig({
     sourcemap: false,
     minify: true,
     cssCodeSplit: false,
+    // Inline fonts and small assets as data URIs (codicon.ttf is ~126KB)
+    assetsInlineLimit: 200000,
     rollupOptions: {
       input: resolve(__dirname, "webview-ui/src/index.tsx"),
       output: {

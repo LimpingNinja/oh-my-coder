@@ -3,6 +3,7 @@ import { createHighlighter, type Highlighter, type BundledLanguage, bundledLangu
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import type { ReactNode } from "react";
+import { Icon } from "./Icon";
 import type { ShikiTransformer } from "shiki";
 
 interface CodeBlockProps {
@@ -148,11 +149,11 @@ export function CodeBlock({ language, children }: CodeBlockProps) {
               onClick={() => setIsExpanded(!isExpanded)}
               title={isExpanded ? "Collapse" : "Expand"}
             >
-              {isExpanded ? "▼" : "▶"}
+              <Icon name={isExpanded ? "chevron-down" : "chevron-right"} />
             </button>
           )}
           <button className="omp-code-block-btn" onClick={handleCopy} title="Copy">
-            {copied ? "✓" : "⎘"}
+            <Icon name={copied ? "check" : "copy"} />
           </button>
         </div>
       </div>

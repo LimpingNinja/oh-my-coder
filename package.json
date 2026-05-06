@@ -26,6 +26,7 @@
     "test": "pnpm lint && pnpm typecheck"
   },
   "dependencies": {
+    "@vscode/codicons": "^0.0.45",
     "hast-util-to-jsx-runtime": "^2.3.6",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",

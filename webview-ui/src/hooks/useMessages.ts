@@ -59,6 +59,25 @@ export function useMessageHandler() {
         case "chat.message": {
           const incoming = msg.message as TranscriptMessage | undefined;
           if (!incoming) break;
+
+          // Suppress system messages that duplicate tool results
+          if (incoming.role === "system" && incoming.content && !incoming.isError) {
+            if (isToolResultDuplicate(incoming.content)) break;
+          }
+
+          // Attach model info from runtime state to finalized assistant messages
+          if (incoming.role === "assistant" && incoming.finalized && !incoming.model) {
+            const { runtime } = getState();
+            if (runtime.kind === "ready" || runtime.kind === "streaming") {
+              const modelStr = runtime.model
+                ? typeof runtime.model === "string"
+                  ? runtime.model
+                  : (runtime.model as any)?.id || (runtime.model as any)?.name || String(runtime.model)
+                : undefined;
+              if (modelStr) incoming.model = modelStr;
+            }
+          }
+
           upsertMessage(incoming);
           break;
         }
@@ -171,4 +190,28 @@ function handleRuntimeFrame(frame: { type: string; [key: string]: unknown }) {
       break;
     }
   }
+}
+
+/**
+ * Check if a system message is a duplicate of a recent tool result.
+ * Returns true if the content matches or is contained in a tool call result
+ * from the last assistant message.
+ */
+function isToolResultDuplicate(content: string): boolean {
+  const { transcript } = getState();
+  // Check last few messages for assistant messages with tool calls
+  const recent = transcript.slice(-5);
+  for (const msg of recent) {
+    if (msg.role !== "assistant" || !msg.toolCalls) continue;
+    for (const tc of msg.toolCalls) {
+      if (tc.status !== "completed" && tc.status !== "error") continue;
+      if (tc.result == null) continue;
+      const resultStr = typeof tc.result === "string" ? tc.result : JSON.stringify(tc.result);
+      // Check if system message is the same content or a subset
+      if (resultStr === content) return true;
+      if (content.length > 20 && resultStr.includes(content.slice(0, 50))) return true;
+      if (content.length > 20 && content.includes(resultStr.slice(0, 50))) return true;
+    }
+  }
+  return false;
 }

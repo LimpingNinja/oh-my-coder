@@ -34,6 +34,13 @@ export interface TranscriptMessage {
   timestamp?: number;
   toolCalls?: ToolCall[];
   isError?: boolean;
+  // Response metadata (populated from runtime when available)
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  costUsd?: number;
 }
 
 export interface ToolCall {
