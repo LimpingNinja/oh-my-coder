@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Reference codebases (not part of this project)
+reference/
+
+# Build outputs
+dist/
+dist-webview/
+
+# Legacy webview (replaced by React build)
+webview-ui/main.js
+
+# VS Code extension packaging
+*.vsix
+
+# Project-local config (personal/machine-specific)
+.omp/
+.vscode/
+AGENTS.md
+tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*

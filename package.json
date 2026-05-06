@@ -1,0 +1,136 @@
+{
+  "name": "oh-my-coder",
+  "displayName": "Oh My Coder",
+  "version": "0.1.0",
+  "description": "OMP-native VS Code extension for Oh My Coder",
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "license": "MIT",
+  "publisher": "omp",
+  "type": "module",
+  "main": "./dist/extension.cjs",
+  "scripts": {
+    "build": "pnpm build:webview && rolldown -c rolldown.config.ts",
+    "build:webview": "vite build",
+    "build:ext": "rolldown -c rolldown.config.ts",
+    "dev": "rolldown -c rolldown.config.ts -w",
+    "dev:webview": "vite build --watch",
+    "package": "pnpm build && pnpx @vscode/vsce package --no-dependencies",
+    "install-local": "pnpm package && code --install-extension *.vsix",
+    "fmt": "oxlint src bridge rolldown.config.ts --fix && oxfmt src bridge rolldown.config.ts package.json tsconfig.json tsconfig.webview.json",
+    "lint": "oxlint src bridge rolldown.config.ts && oxfmt --check src bridge rolldown.config.ts package.json tsconfig.json tsconfig.webview.json",
+    "typecheck": "tsgo --noEmit --skipLibCheck",
+    "typecheck:webview": "tsc -p tsconfig.webview.json --noEmit",
+    "test": "pnpm lint && pnpm typecheck"
+  },
+  "dependencies": {
+    "hast-util-to-jsx-runtime": "^2.3.6",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/vscode": "^1.110.0",
+    "@typescript/native-preview": "^7.0.0-dev.20260320.1",
+    "@vitejs/plugin-react": "^6.0.1",
+    "@vscode/vsce": "^3.7.1",
+    "ovsx": "^0.10.9",
+    "oxfmt": "^0.41.0",
+    "oxlint": "^1.56.0",
+    "rolldown": "^1.0.0-rc.10",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.0"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "omp.openChat",
+        "title": "OMP: Open Chat",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.newSession",
+        "title": "OMP: New Session",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.resumeSession",
+        "title": "OMP: Resume Session",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.focusInput",
+        "title": "OMP: Focus Input",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.switchModel",
+        "title": "OMP: Switch Model",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.cycleThinkingLevel",
+        "title": "OMP: Cycle Thinking Level",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.compact",
+        "title": "OMP: Compact Context",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.openCurrentSessionInEditor",
+        "title": "OMP: Open Current Session in Editor",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.showDiagnosticsLog",
+        "title": "OMP: Show Diagnostics Log",
+        "category": "OMP"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "omp-container",
+          "title": "OMP",
+          "icon": "assets/logo.svg"
+        }
+      ]
+    },
+    "views": {
+      "omp-container": [
+        {
+          "type": "webview",
+          "id": "omp.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Oh My Coder",
+      "properties": {
+        "omp.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the omp binary. Leave empty to auto-detect."
+        }
+      }
+    }
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "engines": {
+    "vscode": "^1.110.0"
+  },
+  "packageManager": "pnpm@10.32.1"
+}
