@@ -11,9 +11,10 @@
  */
 
 import type { OmpExtensionUiResponse } from "./ompRpcTypes.ts";
+import type { OmpTodoPhase } from "./ompRpcTypes.ts";
 import type { OmpSessionListState, OmpSessionSummary } from "../session/types.ts";
 import type { OmpRuntimeState } from "./ompRpcTypes.ts";
-import type { ChatFooterItem } from "./footerTypes.ts";
+import type { ChatFooterItem, ChatHeaderState } from "./footerTypes.ts";
 
 // ============================================================================
 // Shared value types
@@ -83,7 +84,7 @@ export type WebviewToExtensionMessage =
 
   // ── Chat ────────────────────────────────────────────────────────────
   /** Send a user message in an active session. */
-  | { type: "chat.send"; sessionPath: string; content: string; attachments?: ChatAttachment[] }
+  | { type: "chat.send"; sessionPath: string; content: string; behavior?: "steer" | "followUp" | "forceSend"; attachments?: ChatAttachment[] }
   /** Abort the current turn in an active session. */
   | { type: "chat.abort"; sessionPath: string }
 
@@ -100,6 +101,12 @@ export type WebviewToExtensionMessage =
   | { type: "runtime.compact"; customInstructions?: string }
   /** Explicitly request a full runtime state snapshot. */
   | { type: "runtime.getState" }
+  /** Request available models list. */
+  | { type: "runtime.getAvailableModels" }
+  /** Set queue delivery modes. */
+  | { type: "runtime.setSteeringMode"; mode: "all" | "one-at-a-time" }
+  | { type: "runtime.setFollowUpMode"; mode: "all" | "one-at-a-time" }
+  | { type: "runtime.setInterruptMode"; mode: "immediate" | "wait" }
 
   // ── Extension UI response ───────────────────────────────────────────
   /** Respond to an extension UI request from the runtime. */
@@ -107,7 +114,11 @@ export type WebviewToExtensionMessage =
 
   // ── Focus ────────────────────────────────────────────────────────────
   /** Focus was requested (e.g. via command palette). */
-  | { type: "input.focusRequested" };
+  | { type: "input.focusRequested" }
+
+  // ── File operations ─────────────────────────────────────────────────
+  /** Open a file in the VS Code editor. */
+  | { type: "openFile"; path: string; line?: number; endLine?: number };
 
 // ============================================================================
 // Extension → Webview messages
@@ -161,6 +172,7 @@ export type ExtensionToWebviewMessage =
 
   // ── Runtime ─────────────────────────────────────────────────────────
   | { type: "runtime.state"; sessionPath?: string; state: OmpRuntimeState }
+  | { type: "runtime.availableModels"; models: Array<{ provider: string; id: string; [key: string]: unknown }> }
   /** Forward a raw OMP RPC frame to the webview for transcript rendering. */
   | { type: "runtime.frame"; sessionPath?: string; frame: OmpRpcFrameForWebview }
 
@@ -168,9 +180,14 @@ export type ExtensionToWebviewMessage =
   | { type: "chat.message"; sessionPath: string; message: ChatMessageForWebview }
   | { type: "chat.delta"; sessionPath: string; messageId: string; delta: ChatDelta }
   | { type: "chat.messagesLoaded"; sessionPath: string; messages: ChatMessageForWebview[] }
+  | { type: "chat.queued"; behavior: "steer" | "followUp"; content: string }
 
-  // ── Footer/status ───────────────────────────────────────────────────
+  // ── Header/footer/status ─────────────────────────────────────────────
+  | { type: "header.state"; state: ChatHeaderState }
+  | { type: "header.todos"; todos: OmpTodoPhase[] }
   | { type: "footer.state"; items: ChatFooterItem[] }
+  | { type: "footer.modes"; steeringMode: string; followUpMode: string; interruptMode: string }
+  | { type: "footer.thinkingSupport"; supported: boolean; minLevel?: string; maxLevel?: string }
 
   // ── Extension UI request ─────────────────────────────────────────────
   | { type: "extensionUi.request"; request: ExtensionUiRequestForWebview }
@@ -227,11 +244,20 @@ export type OmpRpcFrameForWebview =
   | { type: "auto_retry_start" }
   | { type: "auto_retry_end" };
 
-/** Chat message shape for the webview. Kept structurally loose for this slice. */
+/**
+ * Chat message shape for the webview.
+ *
+ * For hydration (chat.messagesLoaded), `content` may be the raw content block
+ * array from the JSONL (preserving toolCall/thinking blocks).  For streaming
+ * messages it remains a simple string.
+ *
+ * `role` includes "toolResult" for hydration — the webview reducer uses these
+ * to correlate tool results with their originating tool calls.
+ */
 export interface ChatMessageForWebview {
   id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
+  role: "user" | "assistant" | "system" | "toolResult";
+  content: string | unknown[];
   timestamp?: number;
   [key: string]: unknown;
 }
@@ -308,8 +334,13 @@ const webviewToExtensionTypes = new Set<string>([
   "runtime.cycleThinkingLevel",
   "runtime.compact",
   "runtime.getState",
+  "runtime.getAvailableModels",
+  "runtime.setSteeringMode",
+  "runtime.setFollowUpMode",
+  "runtime.setInterruptMode",
   "extensionUi.respond",
   "input.focusRequested",
+  "openFile",
 ]);
 
 const extensionToWebviewTypes = new Set<string>([
@@ -317,11 +348,17 @@ const extensionToWebviewTypes = new Set<string>([
   "selection.state",
   "session.launchState",
   "runtime.state",
+  "runtime.availableModels",
   "runtime.frame",
   "chat.message",
   "chat.delta",
   "chat.messagesLoaded",
+  "chat.queued",
+  "header.state",
+  "header.todos",
   "footer.state",
+  "footer.modes",
+  "footer.thinkingSupport",
   "extensionUi.request",
   "error",
 ]);

@@ -10,6 +10,10 @@ import {
   setRuntime,
   setTranscript,
   setTurnTranscript,
+  setHeader,
+  setFooterEditor,
+  setFooterRuntime,
+  setTodos,
   upsertMessage,
   updateMessage,
   appendMessage,
@@ -17,6 +21,10 @@ import {
   setState,
   getState,
   type TranscriptMessage,
+  type HeaderState,
+  type FooterEditorContext,
+  type FooterRuntimeContext,
+  type TodoPhase,
 } from "../state/store";
 import { processTurnMessage } from "../state/turnReducer";
 import { createEmptyTurnTranscript } from "../state/turns";
@@ -53,9 +61,42 @@ export function useMessageHandler() {
           setSelection(msg.state);
           break;
 
-        case "runtime.state":
+        case "runtime.state": {
           setRuntime(msg.state);
+          // Sync header connection indicator from runtime state
+          const { header } = getState();
+          const rs = msg.state as { kind: string; model?: unknown; thinking?: string };
+          const connection =
+            rs.kind === "ready" || rs.kind === "streaming"
+              ? "connected"
+              : rs.kind === "starting"
+                ? "connecting"
+                : "disconnected";
+          const model = rs.model
+            ? typeof rs.model === "string"
+              ? rs.model
+              : (rs.model as any)?.id || (rs.model as any)?.name || undefined
+            : undefined;
+          setHeader({
+            ...header,
+            connection: connection as HeaderState["connection"],
+            ...(model ? { canCompact: true } : {}),
+          });
+          // Also keep footer runtime in sync
+          if (rs.kind === "ready" || rs.kind === "streaming") {
+            const { footerRuntime } = getState();
+            setFooterRuntime({
+              ...footerRuntime,
+              state: rs.kind as FooterRuntimeContext["state"],
+              model: model ?? footerRuntime.model,
+              thinking: rs.thinking ?? footerRuntime.thinking,
+              // If runtime reports a thinkingLevel (even "off"), the model supports it
+              // If undefined, it doesn't
+              thinkingSupported: rs.thinking !== undefined,
+            });
+          }
           break;
+        }
 
         case "session.launchState":
           if (msg.state.kind === "launching") {
@@ -154,6 +195,87 @@ export function useMessageHandler() {
               isError: true,
             });
           }
+          break;
+        }
+
+        case "header.state":
+          setHeader(msg.state as HeaderState);
+          break;
+
+        case "header.todos":
+          setTodos((msg.todos as TodoPhase[]) || []);
+          break;
+
+        case "chat.queued": {
+          // Mark the last user turn as queued with the behavior
+          const behavior = msg.behavior as "steer" | "followUp";
+          const { turnTranscript } = getState();
+          const turns = [...turnTranscript.turns];
+          // Find the last user turn and mark it
+          for (let i = turns.length - 1; i >= 0; i--) {
+            if (turns[i]!.kind === "user") {
+              turns[i] = { ...turns[i]!, queuedAs: behavior } as typeof turns[number];
+              break;
+            }
+          }
+          setTurnTranscript({ ...turnTranscript, turns });
+          break;
+        }
+
+        case "footer.state": {
+          // Footer items come as a discriminated array; split into editor + runtime slices
+          const items = msg.items as Array<{ source: string; kind: string; [k: string]: unknown }>;
+          if (Array.isArray(items)) {
+            for (const item of items) {
+              if (item.source === "vscodeBridge" && item.kind === "editor") {
+                setFooterEditor({
+                  filePath: item.filePath as string | undefined,
+                  languageId: item.languageId as string | undefined,
+                  isDirty: (item.isDirty as boolean) || false,
+                  line: item.line as number | undefined,
+                  endLine: item.endLine as number | undefined,
+                });
+              } else if (item.source === "vscodeBridge" && item.kind === "selection") {
+                // Merge selection into existing editor context
+                const { footerEditor } = getState();
+                setFooterEditor({
+                  ...footerEditor,
+                  line: item.line as number | undefined,
+                  endLine: item.endLine as number | undefined,
+                });
+              } else if (item.source === "ompRuntime" && item.kind === "runtime") {
+                const { footerRuntime } = getState();
+                setFooterRuntime({
+                  ...footerRuntime,
+                  state: (item.state as FooterRuntimeContext["state"]) || "ready",
+                  model: item.model as string | undefined,
+                  thinking: item.thinking as string | undefined,
+                });
+              }
+            }
+          }
+          break;
+        }
+
+        case "footer.modes": {
+          const { footerRuntime } = getState();
+          setFooterRuntime({
+            ...footerRuntime,
+            steeringMode: msg.steeringMode as "all" | "one-at-a-time" | undefined,
+            followUpMode: msg.followUpMode as "all" | "one-at-a-time" | undefined,
+            interruptMode: msg.interruptMode as "immediate" | "wait" | undefined,
+          });
+          break;
+        }
+
+        case "footer.thinkingSupport": {
+          const { footerRuntime } = getState();
+          setFooterRuntime({
+            ...footerRuntime,
+            thinkingSupported: msg.supported as boolean,
+            thinkingMinLevel: msg.minLevel as string | undefined,
+            thinkingMaxLevel: msg.maxLevel as string | undefined,
+          });
           break;
         }
       }

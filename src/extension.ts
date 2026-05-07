@@ -8,7 +8,8 @@ import type {
   WebviewToExtensionMessage,
   OmpLaunchState,
 } from "./protocol/webviewMessages.ts";
-import { EMPTY_FOOTER_ITEMS } from "./protocol/footerTypes.ts";
+import { EMPTY_HEADER_STATE } from "./protocol/footerTypes.ts";
+import type { ChatHeaderState, ChatFooterItem } from "./protocol/footerTypes.ts";
 import { listWorkspaceSessions, validateResumePath } from "./session/discovery.ts";
 import { resolveWorkspaceScope, getEffectiveWorkspaceFolder } from "./session/workspaceScope.ts";
 import type { OmpSessionListState, OmpSessionSummary } from "./session/types.ts";
@@ -48,6 +49,23 @@ let currentActiveSessionPath: string | undefined;
 
 // Transcript manager — owns transcript state for the active session.
 let transcriptManager: TranscriptManager | undefined;
+
+// Header state — tracks the header presentation state for the webview.
+let currentHeaderState: ChatHeaderState = { ...EMPTY_HEADER_STATE };
+
+// Accumulated session cost (from message_end usage data).
+let sessionCostAccumulator = 0;
+let sessionTokensInput = 0;
+let sessionTokensOutput = 0;
+let sessionTokensCacheRead = 0;
+
+// Queue delivery modes from runtime state.
+let currentSteeringMode: string = "one-at-a-time";
+let currentFollowUpMode: string = "one-at-a-time";
+let currentInterruptMode: string = "immediate";
+
+// Cached available models from get_available_models.
+let cachedAvailableModels: Array<Record<string, unknown>> = [];
 
 /**
  * Start the OMP bridge server.
@@ -110,20 +128,48 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       break;
 
     case "session.switch":
-      outputChannel.appendLine(`[omp] session.switch: ${message.sessionPath} — deferred`);
+      outputChannel.appendLine(`[omp] session.switch: ${message.sessionPath}`);
+      // Switch is the same as resume — launch the session
+      handleSessionResume(message.sessionPath);
       break;
 
-    case "session.rename":
-      outputChannel.appendLine(`[omp] session.rename: ${message.sessionPath} — deferred`);
+    case "session.rename": {
+      const { sessionPath, title } = message;
+      outputChannel.appendLine(`[omp] session.rename: ${sessionPath} → "${title}"`);
+      if (rpcController?.isRunning() && title) {
+        void rpcController.send({ type: "set_session_name", name: title }).then(() => {
+          // Update header immediately
+          currentHeaderState = { ...currentHeaderState, sessionName: title };
+          postToWebview({ type: "header.state", state: currentHeaderState });
+          // Refresh session list to reflect new name
+          refreshSessions();
+        }).catch((err) => {
+          outputChannel.appendLine(`[omp] session.rename failed: ${err}`);
+        });
+      }
       break;
+    }
 
-    case "session.openTranscript":
-      outputChannel.appendLine(`[omp] session.openTranscript: ${message.sessionPath} — deferred`);
+    case "session.openTranscript": {
+      const transcriptPath = message.sessionPath;
+      outputChannel.appendLine(`[omp] session.openTranscript: ${transcriptPath}`);
+      if (transcriptPath) {
+        void (async () => {
+          try {
+            const uri = vscode.Uri.file(transcriptPath);
+            const doc = await vscode.workspace.openTextDocument(uri);
+            await vscode.window.showTextDocument(doc, { preview: false });
+          } catch (err) {
+            outputChannel.appendLine(`[omp] openTranscript failed: ${err}`);
+          }
+        })();
+      }
       break;
+    }
 
     case "chat.send":
-      outputChannel.appendLine(`[omp] chat.send: ${message.sessionPath}`);
-      handleChatSend(message.sessionPath, message.content);
+      outputChannel.appendLine(`[omp] chat.send: ${message.sessionPath} (behavior: ${message.behavior ?? "auto"})`);
+      handleChatSend(message.sessionPath, message.content, message.behavior);
       break;
 
     case "chat.abort":
@@ -131,26 +177,11 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       handleChatAbort();
       break;
 
-    case "runtime.setModel":
-      outputChannel.appendLine(
-        `[omp] runtime.setModel: ${message.provider}/${message.modelId} — deferred`,
-      );
-      break;
-
-    case "runtime.cycleModel":
-      outputChannel.appendLine("[omp] runtime.cycleModel — deferred");
-      break;
-
-    case "runtime.setThinkingLevel":
-      outputChannel.appendLine(`[omp] runtime.setThinkingLevel: ${message.level} — deferred`);
-      break;
-
-    case "runtime.cycleThinkingLevel":
-      outputChannel.appendLine("[omp] runtime.cycleThinkingLevel — deferred");
-      break;
-
     case "runtime.compact":
-      outputChannel.appendLine("[omp] runtime.compact — deferred");
+      outputChannel.appendLine("[omp] runtime.compact");
+      if (rpcController?.isRunning()) {
+        void rpcController.send({ type: "compact" as any });
+      }
       break;
 
     case "runtime.getState":
@@ -158,13 +189,121 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       pushRuntimeState();
       break;
 
+    case "runtime.setModel": {
+      const { provider, modelId } = message;
+      outputChannel.appendLine(`[omp] setModel: ${provider}/${modelId}`);
+      if (rpcController?.isRunning()) {
+        void rpcController.send({ type: "set_model", provider, modelId }).then(async () => {
+          const state = await rpcController!.getState();
+          currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
+          postToWebview({ type: "runtime.state", state: currentRuntimeState });
+          updateHeaderFromOmpState(state);
+          pushFooterState();
+        });
+      }
+      break;
+    }
+
+    case "runtime.cycleModel":
+      if (rpcController?.isRunning()) {
+        void rpcController.send({ type: "cycle_model" }).then(() => {
+          updateRuntimeStateFromController();
+        });
+      }
+      break;
+
+    case "runtime.getAvailableModels":
+      outputChannel.appendLine("[omp] getAvailableModels");
+      if (rpcController?.isRunning()) {
+        void rpcController
+          .send<{ models: Array<Record<string, unknown>> }>({ type: "get_available_models" })
+          .then((result) => {
+            cachedAvailableModels = result?.models ?? [];
+            postToWebview({
+              type: "runtime.availableModels",
+              models: cachedAvailableModels as Array<{ provider: string; id: string }>,
+            });
+          })
+          .catch((err) => {
+            outputChannel.appendLine(`[omp] getAvailableModels failed: ${err}`);
+            postToWebview({ type: "runtime.availableModels", models: [] });
+          });
+      }
+      break;
+
+    case "runtime.setThinkingLevel":
+      outputChannel.appendLine(`[omp] setThinkingLevel: ${message.level}`);
+      if (rpcController?.isRunning()) {
+        void rpcController.send({ type: "set_thinking_level", level: message.level }).then(async () => {
+          const state = await rpcController!.getState();
+          currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
+          postToWebview({ type: "runtime.state", state: currentRuntimeState });
+          updateHeaderFromOmpState(state);
+          pushFooterState();
+        });
+      }
+      break;
+
+    case "runtime.cycleThinkingLevel":
+      if (rpcController?.isRunning()) {
+        void rpcController.send({ type: "cycle_thinking_level" }).then(async () => {
+          const state = await rpcController!.getState();
+          currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
+          postToWebview({ type: "runtime.state", state: currentRuntimeState });
+          updateHeaderFromOmpState(state);
+          pushFooterState();
+        });
+      }
+      break;
+
+    case "runtime.setSteeringMode":
+      outputChannel.appendLine(`[omp] setSteeringMode: ${message.mode}`);
+      if (rpcController?.isRunning()) {
+        void rpcController.send({ type: "set_steering_mode", mode: message.mode }).then(() => {
+          currentSteeringMode = message.mode;
+          pushFooterState();
+        });
+      }
+      break;
+
+    case "runtime.setFollowUpMode":
+      outputChannel.appendLine(`[omp] setFollowUpMode: ${message.mode}`);
+      if (rpcController?.isRunning()) {
+        void rpcController.send({ type: "set_follow_up_mode", mode: message.mode }).then(() => {
+          currentFollowUpMode = message.mode;
+          pushFooterState();
+        });
+      }
+      break;
+
+    case "runtime.setInterruptMode":
+      outputChannel.appendLine(`[omp] setInterruptMode: ${message.mode}`);
+      if (rpcController?.isRunning()) {
+        void rpcController.send({ type: "set_interrupt_mode", mode: message.mode }).then(() => {
+          currentInterruptMode = message.mode;
+          pushFooterState();
+        });
+      }
+      break;
+
     case "extensionUi.respond":
-      outputChannel.appendLine(`[omp] extensionUi.respond: ${message.requestId} — deferred`);
+      // TODO: Wire extension_ui_response back to runtime (Phase 7)
+      outputChannel.appendLine(`[omp] extensionUi.respond: ${message.requestId} — not yet wired`);
       break;
 
     case "input.focusRequested":
-      outputChannel.appendLine("[omp] input.focusRequested — deferred");
+      outputChannel.appendLine("[omp] input.focusRequested");
+      // The webview itself handles focus — just ensure the panel is visible
+      focusChatView();
       break;
+
+    case "openFile": {
+      const filePath = message.path;
+      const line = message.line;
+      outputChannel.appendLine(`[omp] openFile: ${filePath}${line ? `:${line}` : ""}`);
+      handleOpenFile(filePath, line, message.endLine);
+      break;
+    }
 
     default: {
       // Exhaustive check — if a new message type is added to the union
@@ -344,6 +483,12 @@ async function launchSession(
     log: (msg) => outputChannel.appendLine(msg),
   });
 
+  // Reset cost/token accumulators for new session
+  sessionCostAccumulator = 0;
+  sessionTokensInput = 0;
+  sessionTokensOutput = 0;
+  sessionTokensCacheRead = 0;
+
   // Wire frame listener to push runtime state updates and transcript state.
   rpcController.onFrame((frame) => {
     handleRuntimeFrame(frame);
@@ -374,6 +519,25 @@ async function launchSession(
     postToWebview({ type: "session.launchState", state: currentLaunchState ?? { kind: "idle" } });
     postToWebview({ type: "runtime.state", state: currentRuntimeState });
     pushSelectionStateForActive(currentActiveSessionPath);
+    pushHeaderState();
+
+    // Fetch full state immediately to populate context %, todos, and delivery modes
+    if (rpcController?.isRunning()) {
+      void rpcController.getState().then((fullState) => {
+        updateHeaderFromOmpState(fullState);
+        pushFooterState(); // Push after modes are set from fullState
+      }).catch(() => { /* best effort */ });
+
+      // Pre-fetch available models for thinking support detection
+      void rpcController
+        .send<{ models: Array<Record<string, unknown>> }>({ type: "get_available_models" })
+        .then((result) => {
+          cachedAvailableModels = result?.models ?? [];
+          // Re-push footer now that we have model capabilities
+          pushFooterState();
+        })
+        .catch(() => { /* best effort */ });
+    }
 
     // Update transcript manager's session path now that we know the real path.
     if (transcriptManager && currentActiveSessionPath) {
@@ -390,6 +554,37 @@ async function launchSession(
       try {
         const messages = await rpcController.getMessages();
         transcriptManager.hydrateFromMessages(messages);
+
+        // Seed cost/token accumulators from historical messages
+        for (const raw of messages) {
+          const msg = raw as Record<string, unknown>;
+          if (msg.role === "assistant") {
+            const usage = msg.usage as Record<string, unknown> | undefined;
+            if (usage) {
+              if (typeof usage.input === "number") sessionTokensInput += usage.input;
+              if (typeof usage.output === "number") sessionTokensOutput += usage.output;
+              if (typeof usage.cacheRead === "number") sessionTokensCacheRead += usage.cacheRead;
+              const cost = usage.cost as Record<string, unknown> | undefined;
+              if (cost && typeof cost.total === "number") {
+                sessionCostAccumulator += cost.total;
+              }
+            }
+          }
+        }
+
+        // Push accumulated cost to header
+        if (sessionCostAccumulator > 0 || sessionTokensInput > 0) {
+          currentHeaderState = {
+            ...currentHeaderState,
+            costUsd: sessionCostAccumulator > 0 ? sessionCostAccumulator : undefined,
+            tokens: {
+              input: sessionTokensInput,
+              output: sessionTokensOutput,
+              cacheRead: sessionTokensCacheRead,
+            },
+          };
+          postToWebview({ type: "header.state", state: currentHeaderState });
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         outputChannel.appendLine(`[omp] transcript hydration failed: ${msg}`);
@@ -476,8 +671,18 @@ async function sendFirstPrompt(prompt: string, state: OmpRuntimeState): Promise<
 
 /**
  * Handle a chat.send message for an active session.
+ *
+ * When streaming, routes as steer or follow_up based on:
+ * 1. Explicit behavior from caller (if specified)
+ * 2. interruptMode from runtime state: "immediate" → steer, "wait" → followUp
+ *
+ * "forceSend" behavior maps to abort_and_prompt (kill current turn + send).
  */
-async function handleChatSend(sessionPath: string, content: string): Promise<void> {
+async function handleChatSend(
+  sessionPath: string,
+  content: string,
+  behavior?: "steer" | "followUp" | "forceSend",
+): Promise<void> {
   if (!rpcController?.isRunning()) {
     postToWebview({
       type: "error",
@@ -489,18 +694,40 @@ async function handleChatSend(sessionPath: string, content: string): Promise<voi
 
   try {
     const state = await rpcController.getState();
-    if (state.isStreaming) {
-      // Queue as follow-up when streaming
-      await rpcController.prompt({
-        message: content,
-        streamingBehavior: "followUp",
-      });
+
+    let effectiveBehavior: "steer" | "followUp" | "forceSend" | undefined;
+
+    if (behavior === "forceSend") {
+      // Abort current turn and send as fresh prompt
+      await rpcController.send({ type: "abort_and_prompt", message: content });
+      effectiveBehavior = "forceSend";
+    } else if (state.isStreaming) {
+      // Auto-decide based on interruptMode if no explicit behavior
+      effectiveBehavior = behavior ?? (state.interruptMode === "immediate" ? "steer" : "followUp");
+
+      if (effectiveBehavior === "steer") {
+        await rpcController.send({ type: "steer", message: content });
+      } else {
+        await rpcController.send({ type: "follow_up", message: content });
+      }
     } else {
+      // Not streaming — normal prompt
       await rpcController.prompt({ message: content });
     }
 
-    // Prompt accepted — add user message to transcript.
-    transcriptManager?.addUserMessage(content);
+    // Prompt accepted — add user message to transcript
+    if (transcriptManager) {
+      transcriptManager.addUserMessage(content);
+    }
+
+    // Notify webview of the queued behavior so it can style the message
+    if (effectiveBehavior && effectiveBehavior !== "forceSend") {
+      postToWebview({
+        type: "chat.queued",
+        behavior: effectiveBehavior,
+        content,
+      } as ExtensionToWebviewMessage);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     outputChannel.appendLine(`[omp] chat.send failed: ${msg}`);
@@ -550,28 +777,66 @@ function handleRuntimeFrame(frame: unknown): void {
       updateRuntimeStateFromController();
       break;
     case "agent_end": {
-      // Agent ended — query full state
+      // Agent ended — query full state and refresh header stats
       void rpcController
         .getState()
         .then((state) => {
           currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
           postToWebview({ type: "runtime.state", state: currentRuntimeState });
+          pushHeaderState();
+          updateHeaderFromOmpState(state);
+          pushFooterState(); // Stable moment — safe to push footer
         })
         .catch(() => {
           // Best effort — state update on agent_end is non-critical
         });
+      // Refresh cost/token stats after each agent turn
+      void refreshHeaderStats();
       break;
     }
     case "message_start":
     case "message_update":
-    case "message_end":
     case "turn_start":
     case "turn_end":
       // These are transcript events — forward to webview for later rendering.
-      // This slice does not implement transcript rendering, but we forward
-      // frame data so the UI can at least know streaming is happening.
       updateRuntimeStateFromController();
       break;
+    case "message_end": {
+      // Extract usage/cost from the finalized message and accumulate
+      const endFrame = frame as Record<string, unknown>;
+      const endMessage = endFrame.message as Record<string, unknown> | undefined;
+      if (endMessage) {
+        const usage = endMessage.usage as Record<string, unknown> | undefined;
+        if (usage) {
+          // Accumulate tokens
+          if (typeof usage.input === "number") sessionTokensInput += usage.input;
+          if (typeof usage.output === "number") sessionTokensOutput += usage.output;
+          if (typeof usage.cacheRead === "number") sessionTokensCacheRead += usage.cacheRead;
+
+          // Accumulate cost
+          const cost = usage.cost as Record<string, unknown> | undefined;
+          if (cost && typeof cost.total === "number") {
+            sessionCostAccumulator += cost.total;
+          } else if (typeof usage.totalCost === "number") {
+            sessionCostAccumulator += usage.totalCost as number;
+          }
+
+          // Push updated header with accumulated values
+          currentHeaderState = {
+            ...currentHeaderState,
+            costUsd: sessionCostAccumulator > 0 ? sessionCostAccumulator : undefined,
+            tokens: {
+              input: sessionTokensInput,
+              output: sessionTokensOutput,
+              cacheRead: sessionTokensCacheRead,
+            },
+          };
+          postToWebview({ type: "header.state", state: currentHeaderState });
+        }
+      }
+      updateRuntimeStateFromController();
+      break;
+    }
     case "tool_execution_start":
     case "tool_execution_update":
     case "tool_execution_end":
@@ -581,6 +846,11 @@ function handleRuntimeFrame(frame: unknown): void {
     case "auto_compaction_end":
     case "auto_retry_start":
     case "auto_retry_end":
+      updateRuntimeStateFromController();
+      break;
+    case "todo_reminder":
+    case "todo_auto_clear":
+      // Todos changed — refresh state to get updated todoPhases
       updateRuntimeStateFromController();
       break;
     default:
@@ -601,6 +871,9 @@ function updateRuntimeStateFromController(): void {
     .then((state) => {
       currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
       postToWebview({ type: "runtime.state", state: currentRuntimeState });
+      updateHeaderFromOmpState(state);
+      // Note: pushFooterState NOT called here — it's too hot a path.
+      // Footer state is pushed on editor changes and after agent_end.
     })
     .catch(() => {
       // Non-critical — state will be reconciled on next event.
@@ -693,11 +966,11 @@ function pushInitialState(): void {
     postToWebview({ type: "session.launchState", state: currentLaunchState });
   }
 
-  // Footer — unavailable items only.
-  postToWebview({
-    type: "footer.state",
-    items: EMPTY_FOOTER_ITEMS,
-  });
+  // Footer — real editor context + runtime state.
+  pushFooterState();
+
+  // Header state — push current (may be from a previous session or initial empty).
+  pushHeaderState();
 
   // Kick off an async session refresh to populate real data.
   refreshSessions();
@@ -830,6 +1103,101 @@ function pushSelectionStateForActive(sessionPath: string | undefined): void {
 }
 
 /**
+ * Build and push header state to the webview.
+ *
+ * Derives connection from runtime state, session name from discovery or state,
+ * and cost/tokens from the last known stats.
+ */
+function pushHeaderState(): void {
+  // Derive connection from runtime state
+  const connection: ChatHeaderState["connection"] =
+    currentRuntimeState.kind === "ready" || currentRuntimeState.kind === "streaming"
+      ? "connected"
+      : currentRuntimeState.kind === "disconnected"
+        ? "disconnected"
+        : "connecting";
+
+  // Find session title from discovery (fallback to current header name)
+  const activeSession = currentSessions.find((s) => s.path === currentActiveSessionPath);
+  const sessionName = activeSession?.title ?? currentHeaderState.sessionName ?? "New Session";
+
+  currentHeaderState = {
+    ...currentHeaderState,
+    connection,
+    sessionName,
+    sessionPath: currentActiveSessionPath ?? "",
+    canCompact: connection === "connected",
+  };
+
+  postToWebview({ type: "header.state", state: currentHeaderState });
+}
+
+/**
+ * Update header state from a raw get_state payload.
+ *
+ * Extracts contextUsage, sessionName, and todoPhases directly from the
+ * OMP runtime state response. Called after every successful get_state.
+ */
+function updateHeaderFromOmpState(state: OmpStatePayload): void {
+  currentHeaderState = {
+    ...currentHeaderState,
+    contextPercent: state.contextUsage?.percent != null
+      ? Math.round(state.contextUsage.percent)
+      : currentHeaderState.contextPercent,
+    sessionName: state.sessionName ?? currentHeaderState.sessionName,
+  };
+
+  postToWebview({ type: "header.state", state: currentHeaderState });
+
+  // Push todos separately so the webview can render the todo row
+  if (state.todoPhases) {
+    postToWebview({
+      type: "header.todos",
+      todos: state.todoPhases,
+    } as ExtensionToWebviewMessage);
+  }
+
+  // Update queue modes for footer
+  currentSteeringMode = state.steeringMode;
+  currentFollowUpMode = state.followUpMode;
+  currentInterruptMode = state.interruptMode;
+}
+
+/**
+ * Update header with usage stats from get_session_stats.
+ */
+async function refreshHeaderStats(): Promise<void> {
+  if (!rpcController?.isRunning()) return;
+  try {
+    const stats = await rpcController.getSessionStats();
+    if (!stats) return;
+
+    const usage = stats as Record<string, unknown>;
+    currentHeaderState = {
+      ...currentHeaderState,
+      costUsd: typeof usage.totalCostUsd === "number" ? usage.totalCostUsd : currentHeaderState.costUsd,
+      contextPercent: typeof usage.contextPercent === "number"
+        ? Math.round(usage.contextPercent)
+        : typeof usage.usedPercent === "number"
+          ? Math.round(usage.usedPercent)
+          : currentHeaderState.contextPercent,
+      tokens:
+        typeof usage.inputTokens === "number"
+          ? {
+              input: usage.inputTokens as number,
+              output: (usage.outputTokens as number) ?? 0,
+              cacheRead: (usage.cacheReadTokens as number) ?? 0,
+            }
+          : currentHeaderState.tokens,
+    };
+
+    postToWebview({ type: "header.state", state: currentHeaderState });
+  } catch {
+    // Non-critical — stats are best-effort
+  }
+}
+
+/**
  * Push a failed launch state for the selection pane.
  */
 function pushSelectionStateForFailed(
@@ -898,6 +1266,120 @@ function postToWebview(message: ExtensionToWebviewMessage): void {
   void chatProvider?.postMessage(message);
 }
 
+/**
+ * Push footer state to the webview.
+ *
+ * Reads the current active editor and selection from VS Code, plus
+ * runtime model/thinking state, and sends a footer.state message.
+ */
+function pushFooterState(): void {
+  const editor = vscode.window.activeTextEditor;
+  const items: ChatFooterItem[] = [];
+
+  // Editor context
+  if (editor) {
+    items.push({
+      source: "vscodeBridge",
+      kind: "editor",
+      filePath: editor.document.uri.fsPath,
+      languageId: editor.document.languageId,
+      isDirty: editor.document.isDirty,
+    });
+
+    // Selection/cursor
+    const sel = editor.selection;
+    if (sel && !sel.isEmpty) {
+      items.push({
+        source: "vscodeBridge",
+        kind: "selection",
+        line: sel.start.line + 1, // VS Code is 0-indexed, display as 1-indexed
+        endLine: sel.end.line + 1,
+      });
+    } else if (sel) {
+      items.push({
+        source: "vscodeBridge",
+        kind: "selection",
+        line: sel.active.line + 1,
+      });
+    }
+  } else {
+    items.push({
+      source: "vscodeBridge",
+      kind: "editor",
+      filePath: undefined,
+      languageId: undefined,
+      isDirty: false,
+    });
+  }
+
+  // Runtime model/thinking
+  if (currentRuntimeState.kind === "ready" || currentRuntimeState.kind === "streaming") {
+    const rs = currentRuntimeState as Record<string, unknown>;
+    const model = rs.model
+      ? typeof rs.model === "string"
+        ? rs.model
+        : (rs.model as any)?.id || (rs.model as any)?.name || undefined
+      : undefined;
+    items.push({
+      source: "ompRuntime",
+      kind: "runtime",
+      state: currentRuntimeState.kind as "ready" | "streaming",
+      model: model ?? undefined,
+      thinking: (rs.thinking as import("./protocol/webviewMessages.ts").ThinkingLevel) ?? undefined,
+    } as ChatFooterItem);
+  } else {
+    items.push({
+      source: "ompRuntime",
+      kind: "runtime",
+      state: currentRuntimeState.kind === "disconnected" ? "ready" : "error",
+      model: undefined,
+      thinking: undefined,
+    });
+  }
+
+  // Push queue modes as a separate conceptual item (webview extracts from footer.state)
+  postToWebview({ type: "footer.state", items });
+
+  // Push queue modes directly via runtime state
+  postToWebview({
+    type: "footer.modes",
+    steeringMode: currentSteeringMode,
+    followUpMode: currentFollowUpMode,
+    interruptMode: currentInterruptMode,
+  } as ExtensionToWebviewMessage);
+
+  // Determine thinking support from cached model list
+  if (currentRuntimeState.kind === "ready" || currentRuntimeState.kind === "streaming") {
+    const rs = currentRuntimeState as Record<string, unknown>;
+    const modelRef = rs.model as { provider?: string; id?: string } | string | undefined;
+    const modelId = typeof modelRef === "string" ? modelRef : modelRef?.id;
+
+    let thinkingSupported = false;
+    let thinkingMinLevel: string | undefined;
+    let thinkingMaxLevel: string | undefined;
+
+    if (modelId && cachedAvailableModels.length > 0) {
+      const matchedModel = cachedAvailableModels.find((m) => m.id === modelId);
+      if (matchedModel && matchedModel.thinking) {
+        thinkingSupported = true;
+        const t = matchedModel.thinking as Record<string, unknown>;
+        thinkingMinLevel = t.minLevel as string | undefined;
+        thinkingMaxLevel = t.maxLevel as string | undefined;
+      }
+    } else if (rs.thinking != null) {
+      // Fallback: if runtime reports thinkingLevel, it's supported
+      thinkingSupported = true;
+    }
+
+    postToWebview({
+      type: "footer.thinkingSupport",
+      supported: thinkingSupported,
+      minLevel: thinkingMinLevel,
+      maxLevel: thinkingMaxLevel,
+    } as ExtensionToWebviewMessage);
+  }
+}
+
 export async function activate(context: vscode.ExtensionContext) {
   extensionUri = context.extensionUri;
   outputChannel = vscode.window.createOutputChannel("Oh My Coder", { log: true });
@@ -930,7 +1412,14 @@ export async function activate(context: vscode.ExtensionContext) {
     [
       "omp.openCurrentSessionInEditor",
       () => {
-        outputChannel.appendLine("[omp] openCurrentSessionInEditor: no active session (deferred)");
+        if (currentActiveSessionPath) {
+          const uri = vscode.Uri.file(currentActiveSessionPath);
+          void vscode.workspace.openTextDocument(uri).then((doc) => {
+            vscode.window.showTextDocument(doc, { preview: false });
+          });
+        } else {
+          outputChannel.appendLine("[omp] openCurrentSessionInEditor: no active session");
+        }
       },
     ],
     [
@@ -966,6 +1455,20 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   });
 
+  // ── Editor context listeners for footer ────────────────────────────────
+  // Track active editor and selection to push file context to the webview footer.
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(() => pushFooterState()),
+    vscode.window.onDidChangeTextEditorSelection(() => pushFooterState()),
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      // Only push if the changed doc is the active editor's document
+      const active = vscode.window.activeTextEditor;
+      if (active && e.document === active.document) {
+        pushFooterState();
+      }
+    }),
+  );
+
   outputChannel.appendLine("[omp] activation complete");
 }
 
@@ -995,6 +1498,46 @@ export async function deactivate() {
  */
 function focusChatView(): void {
   vscode.commands.executeCommand("omp.chatView.focus");
+}
+
+/**
+ * Open a file in the VS Code editor, optionally at a specific line.
+ */
+async function handleOpenFile(
+  filePath: string,
+  line?: number,
+  endLine?: number,
+): Promise<void> {
+  try {
+    // Resolve relative paths against workspace folder
+    let uri: vscode.Uri;
+    if (filePath.startsWith("/") || filePath.match(/^[A-Za-z]:\\/)) {
+      // Absolute path
+      uri = vscode.Uri.file(filePath);
+    } else {
+      // Relative path — resolve against workspace root
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (workspaceFolder) {
+        uri = vscode.Uri.joinPath(workspaceFolder, filePath);
+      } else {
+        uri = vscode.Uri.file(filePath);
+      }
+    }
+
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const editor = await vscode.window.showTextDocument(doc, { preview: true });
+
+    if (line) {
+      const startLine = Math.max(0, line - 1);
+      const endLn = endLine ? Math.max(0, endLine - 1) : startLine;
+      const range = new vscode.Range(startLine, 0, endLn, 0);
+      editor.selection = new vscode.Selection(range.start, range.end);
+      editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    outputChannel.appendLine(`[omp] openFile failed: ${msg}`);
+  }
 }
 
 /**

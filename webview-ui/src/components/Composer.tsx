@@ -48,9 +48,6 @@ export function Composer({ onSubmit, placeholder = "Type a message...", disabled
           onInput={handleInput}
           autoFocus
         />
-        <button className="omp-composer-send" onClick={handleSubmit} disabled={disabled} title="Send">
-          ▶
-        </button>
       </div>
     </div>
   );

@@ -1,7 +1,16 @@
 import { useState, useMemo } from "react";
 import type { ToolCall } from "../state/store";
-import { CodeBlock } from "./CodeBlock";
 import { Icon } from "./Icon";
+import { ClickableText } from "./ClickableText";
+import { openFileInEditor } from "../utils/resultParser";
+import {
+  ReadResult,
+  SearchResult,
+  EditResult,
+  BashResult,
+  FindResult,
+  GenericResult,
+} from "./tools/ToolResults";
 
 interface ToolBlockProps {
   toolCall: ToolCall;
@@ -16,8 +25,11 @@ function getToolDisplay(toolName: string): { icon: string; label: string } {
     apply_diff: { icon: "diff", label: "Edit" },
     replace_in_file: { icon: "replace", label: "Edit" },
     read_file: { icon: "file", label: "Read" },
+    read: { icon: "file", label: "Read" },
     list_files: { icon: "folder", label: "List" },
+    find: { icon: "folder", label: "Find" },
     search_files: { icon: "search", label: "Search" },
+    search: { icon: "search", label: "Search" },
     execute_command: { icon: "terminal", label: "Shell" },
     bash: { icon: "terminal", label: "Shell" },
     browser_action: { icon: "globe", label: "Browser" },
@@ -26,87 +38,39 @@ function getToolDisplay(toolName: string): { icon: string; label: string } {
   };
 
   if (toolName.startsWith("mcp__")) {
-    const parts = toolName.split("_");
-    return { icon: "zap", label: `MCP ${parts.slice(2).join("_")}` };
+    const parts = toolName.replace("mcp__", "").split("_");
+    return { icon: "zap", label: parts.slice(1).join("_") || "MCP" };
   }
 
   return map[toolName] || { icon: "gear", label: toolName };
 }
 
-/** Extract filename from tool args if present */
 function extractFilename(args: unknown): string | null {
   if (!args || typeof args !== "object") return null;
   const a = args as Record<string, unknown>;
-  if (typeof a.path === "string") return a.path;
-  if (typeof a.filePath === "string") return a.filePath;
-  if (typeof a.file_path === "string") return a.file_path;
-  if (typeof a.pathInProject === "string") return a.pathInProject;
-  return null;
+  return (a.path || a.filePath || a.file_path || a.pathInProject) as string | null;
 }
 
-/** Extract line count from content if present */
-function extractLineCount(args: unknown, result: unknown): number | null {
-  // Try from result
-  if (result && typeof result === "string") {
-    const lines = result.split("\n").length;
-    if (lines > 1) return lines;
-  }
-  // Try from args content
-  if (args && typeof args === "object") {
-    const a = args as Record<string, unknown>;
-    const content = a.content || a.newText || a.text;
-    if (typeof content === "string") {
-      return content.split("\n").length;
-    }
-  }
-  return null;
-}
-
-/** Extract displayable content from args (for write/edit operations) */
-function extractContent(args: unknown): string | null {
+function extractCommand(args: unknown): string | null {
   if (!args || typeof args !== "object") return null;
   const a = args as Record<string, unknown>;
-  if (typeof a.content === "string") return a.content;
-  if (typeof a.newText === "string") return a.newText;
-  if (typeof a.command === "string") return a.command;
-  if (typeof a.diff === "string") return a.diff;
-  return null;
+  return (a.command || a.cmd) as string | null;
 }
 
-/** Guess language from filename */
-function guessLanguage(filename: string | null): string {
-  if (!filename) return "text";
-  const ext = filename.split(".").pop()?.toLowerCase() || "";
-  const map: Record<string, string> = {
-    ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
-    py: "python", rb: "ruby", rs: "rust", go: "go", lua: "lua",
-    c: "c", h: "c", cpp: "cpp", hpp: "cpp", cs: "csharp",
-    java: "java", kt: "kotlin", swift: "swift", sh: "bash",
-    yml: "yaml", yaml: "yaml", json: "json", toml: "toml",
-    md: "markdown", html: "html", css: "css", sql: "sql",
-    cmake: "cmake", txt: "text",
-  };
-  return map[ext] || "text";
+/** Get just the basename from a path for the header */
+function basename(path: string): string {
+  const parts = path.split("/");
+  return parts[parts.length - 1] || path;
 }
 
-/** Format result text for display */
-function formatResult(result: unknown): string | null {
-  if (result == null) return null;
-  if (typeof result === "string") return result;
-  if (typeof result === "object") {
-    // Try to extract text content from content blocks
-    if (Array.isArray(result)) {
-      const texts = result
-        .filter((b: any) => b?.type === "text" && typeof b.text === "string")
-        .map((b: any) => b.text);
-      if (texts.length > 0) return texts.join("\n");
-    }
-    const r = result as Record<string, unknown>;
-    if (typeof r.text === "string") return r.text;
-    if (typeof r.content === "string") return r.content;
-    return JSON.stringify(result, null, 2);
-  }
-  return String(result);
+/** Determine which tool category for result rendering */
+function getToolCategory(toolName: string): "read" | "search" | "edit" | "bash" | "find" | "generic" {
+  if (["read", "read_file", "jetbrains_read_file", "jetbrains_get_file_text_by_path"].includes(toolName)) return "read";
+  if (["search", "search_files", "jetbrains_search_in_files_by_text", "jetbrains_search_in_files_by_regex", "jetbrains_search_text", "jetbrains_search_regex"].includes(toolName)) return "search";
+  if (["edit", "edit_file", "apply_diff", "replace_in_file", "write_to_file", "write", "create_file", "jetbrains_replace_text_in_file"].includes(toolName)) return "edit";
+  if (["bash", "execute_command", "shell", "jetbrains_execute_terminal_command"].includes(toolName)) return "bash";
+  if (["find", "list_files", "glob", "jetbrains_find_files_by_glob", "jetbrains_find_files_by_name_keyword"].includes(toolName)) return "find";
+  return "generic";
 }
 
 export function ToolBlock({ toolCall }: ToolBlockProps) {
@@ -115,62 +79,102 @@ export function ToolBlock({ toolCall }: ToolBlockProps) {
 
   const display = useMemo(() => getToolDisplay(toolName), [toolName]);
   const filename = useMemo(() => extractFilename(args), [args]);
-  const lineCount = useMemo(() => extractLineCount(args, result), [args, result]);
-  const content = useMemo(() => extractContent(args), [args]);
-  const resultText = useMemo(() => formatResult(result), [result]);
-  const language = useMemo(() => guessLanguage(filename), [filename]);
+  const command = useMemo(() => extractCommand(args), [args]);
+  const category = useMemo(() => getToolCategory(toolName), [toolName]);
 
-  const statusIcon = status === "running" ? "loading~spin" : status === "error" ? "error" : "pass";
-  const statusClass = `omp-tool-block omp-tool-${status}`;
+  const statusIcon =
+    status === "running" ? "sync~spin"
+    : status === "error" ? "error"
+    : status === "cancelled" ? "circle-slash"
+    : "pass";
 
-  // Build the header summary line
-  const headerParts: string[] = [];
+  // Build header display text
+  let headerText = "";
   if (filename) {
-    const basename = filename.split("/").pop() || filename;
-    headerParts.push(basename);
+    headerText = basename(filename);
+    // Add range info from args if present
+    const a = args as Record<string, unknown> | null;
+    if (a?.sel) headerText += `:${a.sel}`;
+    else if (a?.startLine) headerText += `:${a.startLine}${a.endLine ? `-${a.endLine}` : ""}`;
+  } else if (command) {
+    headerText = command.length > 50 ? command.slice(0, 50) + "…" : command;
   }
-  if (lineCount && lineCount > 1) {
-    headerParts.push(`(${lineCount} lines)`);
-  }
-  const headerSummary = headerParts.join(" ");
 
   return (
-    <div className={statusClass}>
-      <button className="omp-tool-header" onClick={() => setIsExpanded(!isExpanded)}>
+    <div className={`omp-tool-block omp-tool-${status}`}>
+      <div
+        className="omp-tool-header"
+        role="button"
+        tabIndex={0}
+        onClick={() => setIsExpanded(!isExpanded)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setIsExpanded(!isExpanded); }}
+      >
         <Icon name={isExpanded ? "chevron-down" : "chevron-right"} className="omp-tool-chevron" />
         <Icon name={statusIcon} className={`omp-tool-status-icon omp-tool-status-${status}`} />
         <Icon name={display.icon} className="omp-tool-action-icon" />
-        <span className="omp-tool-label">{display.label}</span>
-        {headerSummary && <span className="omp-tool-filename">{headerSummary}</span>}
-        {intent && !filename && <span className="omp-tool-intent">{intent}</span>}
-      </button>
+        <span className={`omp-tool-label${status === "running" ? " omp-shimmer" : ""}`}>{display.label}</span>
+        {filename ? (
+          <a
+            href="#"
+            className="omp-file-link omp-tool-filename"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              openFileInEditor(filename);
+            }}
+            title={`Open ${filename}`}
+          >
+            {headerText}
+          </a>
+        ) : headerText ? (
+          <span className="omp-tool-header-text">{headerText}</span>
+        ) : intent ? (
+          <span className="omp-tool-intent">{intent}</span>
+        ) : null}
+      </div>
 
       {isExpanded && (
         <div className="omp-tool-body">
-          {/* Show content for write/edit operations */}
-          {content && (
-            <CodeBlock language={language}>{content}</CodeBlock>
-          )}
+          {/* Tool-specific result renderer */}
+          {result != null && !isError && renderResult(category, result, filename, command)}
 
-          {/* Show result for completed operations */}
-          {!content && resultText && !isError && (
-            <div className="omp-tool-result-content">
-              {resultText.includes("\n") || resultText.length > 120 ? (
-                <CodeBlock language={language}>{resultText}</CodeBlock>
-              ) : (
-                <p className="omp-tool-result-text">{resultText}</p>
-              )}
+          {/* Error display */}
+          {isError && result != null && (
+            <div className="omp-tool-error-content">
+              <pre>{typeof result === "string" ? result : JSON.stringify(result, null, 2)}</pre>
             </div>
           )}
 
-          {/* Show error for failed operations */}
-          {isError && resultText && (
-            <div className="omp-tool-error-content">
-              <pre>{resultText.slice(0, 500)}</pre>
+          {/* No result yet (running) */}
+          {result == null && status === "running" && (
+            <div className="omp-tool-running-msg">
+              <Icon name="sync~spin" /> Running...
             </div>
           )}
         </div>
       )}
     </div>
   );
+}
+
+function renderResult(
+  category: "read" | "search" | "edit" | "bash" | "find" | "generic",
+  result: unknown,
+  filename: string | null,
+  command: string | null,
+) {
+  switch (category) {
+    case "read":
+      return <ReadResult result={result} filename={filename} />;
+    case "search":
+      return <SearchResult result={result} />;
+    case "edit":
+      return <EditResult result={result} filename={filename} />;
+    case "bash":
+      return <BashResult result={result} command={command || undefined} />;
+    case "find":
+      return <FindResult result={result} />;
+    default:
+      return <GenericResult result={result} />;
+  }
 }

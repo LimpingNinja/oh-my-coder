@@ -62,33 +62,83 @@ function hydrateFromMessages(state: TurnTranscriptState, messages: unknown[]): T
 
   const turns: Turn[] = [];
 
+  // Build a map of tool results by toolCallId for matching
+  const toolResults = new Map<string, { toolName: string; content: unknown; details: unknown; isError: boolean }>();
+  for (const raw of messages) {
+    const msg = raw as Record<string, unknown>;
+    if (msg.role === "toolResult" && typeof msg.toolCallId === "string") {
+      toolResults.set(msg.toolCallId, {
+        toolName: (msg.toolName as string) || "",
+        content: msg.content,
+        details: msg.details,
+        isError: (msg.isError as boolean) || false,
+      });
+    }
+  }
+
   for (const raw of messages) {
     const msg = raw as Record<string, unknown>;
     const role = msg.role as string;
-    const content = extractContent(msg.content);
 
     if (role === "user") {
-      turns.push({
-        kind: "user",
-        id: generateTurnId(),
-        timestamp: (msg.timestamp as number) || Date.now(),
-        text: content,
-      });
-    } else if (role === "assistant" && content) {
-      // Create an agent turn with a text event
+      const content = extractContent(msg.content);
+      if (content) {
+        turns.push({
+          kind: "user",
+          id: generateTurnId(),
+          timestamp: (msg.timestamp as number) || Date.now(),
+          text: content,
+        });
+      }
+    } else if (role === "assistant") {
       const events: TurnEvent[] = [];
-      const thinking = extractThinking(msg.content);
-      if (thinking) events.push({ kind: "thinking", content: thinking, streaming: false });
-      events.push({ kind: "text", content, streaming: false });
-      turns.push({
-        kind: "agent",
-        id: generateTurnId(),
-        timestamp: (msg.timestamp as number) || Date.now(),
-        events,
-        active: false,
-      });
+
+      // Parse content blocks to find text, thinking, and tool calls
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content as Array<Record<string, unknown>>) {
+          if (block.type === "thinking" && typeof block.thinking === "string") {
+            events.push({ kind: "thinking", content: block.thinking, streaming: false });
+          } else if (block.type === "text" && typeof block.text === "string") {
+            events.push({ kind: "text", content: block.text, streaming: false });
+          } else if (block.type === "toolCall" || block.type === "tool_use") {
+            const toolCallId = (block.id || block.toolCallId) as string || "";
+            const toolName = (block.name || block.toolName) as string || "";
+            const args = block.arguments || block.args || block.input;
+
+            // Look up the result
+            const resultEntry = toolResults.get(toolCallId);
+
+            events.push({
+              kind: "tool_call",
+              toolCallId,
+              toolName,
+              args,
+              argsComplete: true,
+              status: resultEntry ? (resultEntry.isError ? "error" : "completed") : "completed",
+              result: resultEntry ? { content: resultEntry.content, details: resultEntry.details } : undefined,
+              isError: resultEntry?.isError,
+            });
+          }
+        }
+      } else {
+        // Simple string content
+        const content = extractContent(msg.content);
+        const thinking = extractThinking(msg.content);
+        if (thinking) events.push({ kind: "thinking", content: thinking, streaming: false });
+        if (content) events.push({ kind: "text", content, streaming: false });
+      }
+
+      if (events.length > 0) {
+        turns.push({
+          kind: "agent",
+          id: generateTurnId(),
+          timestamp: (msg.timestamp as number) || Date.now(),
+          events,
+          active: false,
+        });
+      }
     }
-    // Skip system/tool-result messages during hydration — they're duplicates
+    // Skip toolResult messages — they're consumed above via the toolResults map
   }
 
   return { ...state, turns };
@@ -167,8 +217,18 @@ function handleRuntimeFrame(
   const type = frame.type as string;
 
   switch (type) {
-    case "agent_start":
-      return { ...ensureActiveAgentTurn(state), agentActive: true };
+    case "agent_start": {
+      // Clear queuedAs on all user turns — the agent is consuming queued messages
+      let s = state;
+      const hasQueued = s.turns.some((t) => t.kind === "user" && t.queuedAs);
+      if (hasQueued) {
+        const turns = s.turns.map((t) =>
+          t.kind === "user" && t.queuedAs ? { ...t, queuedAs: undefined } : t,
+        );
+        s = { ...s, turns };
+      }
+      return { ...ensureActiveAgentTurn(s), agentActive: true };
+    }
 
     case "agent_end":
       return finalizeAgentTurn({ ...state, agentActive: false, thinkingActive: false });
@@ -202,7 +262,33 @@ function handleRuntimeFrame(
 
     case "tool_execution_update": {
       const toolCallId = frame.toolCallId as string;
-      return updateToolCall(state, toolCallId, { status: "running" });
+      const partialResult = frame.partialResult as Record<string, unknown> | undefined;
+
+      // Extract progress array from task tool updates
+      let progress: import("./turns").TaskProgress[] | undefined;
+      if (partialResult?.details && typeof partialResult.details === "object") {
+        const details = partialResult.details as Record<string, unknown>;
+        if (Array.isArray(details.progress)) {
+          progress = details.progress.map((p: any) => ({
+            index: p.index ?? 0,
+            id: p.id ?? "",
+            agent: p.agent ?? "agent",
+            status: p.status ?? "running",
+            description: p.description,
+            task: p.task,
+            currentTool: p.currentTool,
+            currentToolArgs: p.currentToolArgs,
+            lastIntent: p.lastIntent,
+            toolCount: p.toolCount,
+            tokens: p.tokens,
+            durationMs: p.durationMs,
+            recentTools: Array.isArray(p.recentTools) ? p.recentTools : undefined,
+            recentOutput: Array.isArray(p.recentOutput) ? p.recentOutput : undefined,
+          }));
+        }
+      }
+
+      return updateToolCall(state, toolCallId, { status: "running", ...(progress ? { progress } : {}) });
     }
 
     case "tool_execution_end": {

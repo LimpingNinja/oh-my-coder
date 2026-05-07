@@ -48,7 +48,7 @@ export interface ToolCall {
   toolName: string;
   args?: unknown;
   intent?: string;
-  status: "running" | "completed" | "error";
+  status: "running" | "completed" | "error" | "cancelled";
   result?: unknown;
   isError?: boolean;
 }
@@ -79,6 +79,52 @@ import type { TurnTranscriptState } from "./turns";
 import { createEmptyTurnTranscript } from "./turns";
 
 // ============================================================================
+// Header/footer state types (mirroring host protocol)
+// ============================================================================
+
+export interface HeaderState {
+  connection: "connected" | "connecting" | "disconnected";
+  sessionName: string;
+  sessionPath: string;
+  costUsd?: number;
+  contextPercent?: number;
+  canCompact: boolean;
+  tokens?: { input: number; output: number; cacheRead: number };
+}
+
+export interface FooterEditorContext {
+  filePath?: string;
+  languageId?: string;
+  isDirty: boolean;
+  line?: number;
+  endLine?: number;
+}
+
+export interface FooterRuntimeContext {
+  state: "ready" | "streaming" | "tool" | "compacting" | "error";
+  model?: string;
+  thinking?: string;
+  thinkingSupported: boolean;
+  thinkingMinLevel?: string;
+  thinkingMaxLevel?: string;
+  steeringMode?: "all" | "one-at-a-time";
+  followUpMode?: "all" | "one-at-a-time";
+  interruptMode?: "immediate" | "wait";
+}
+
+export interface TodoTask {
+  id: string;
+  content: string;
+  status: string;
+}
+
+export interface TodoPhase {
+  id: string;
+  name: string;
+  tasks: TodoTask[];
+}
+
+// ============================================================================
 // Store
 // ============================================================================
 
@@ -90,6 +136,10 @@ interface AppState {
   transcript: TranscriptMessage[];
   turnTranscript: TurnTranscriptState;
   historySearch: string;
+  header: HeaderState;
+  footerEditor: FooterEditorContext;
+  footerRuntime: FooterRuntimeContext;
+  todos: TodoPhase[];
 }
 
 const initialState: AppState = {
@@ -100,6 +150,29 @@ const initialState: AppState = {
   transcript: [],
   turnTranscript: createEmptyTurnTranscript(),
   historySearch: "",
+  header: {
+    connection: "disconnected",
+    sessionName: "New Session",
+    sessionPath: "",
+    costUsd: undefined,
+    contextPercent: undefined,
+    canCompact: false,
+    tokens: undefined,
+  },
+  footerEditor: {
+    filePath: undefined,
+    languageId: undefined,
+    isDirty: false,
+    line: undefined,
+    endLine: undefined,
+  },
+  footerRuntime: {
+    state: "ready",
+    model: undefined,
+    thinking: undefined,
+    thinkingSupported: true,
+  },
+  todos: [],
 };
 
 let state: AppState = { ...initialState };
@@ -181,6 +254,22 @@ export function clearTranscript() {
 
 export function setHistorySearch(search: string) {
   setState({ historySearch: search });
+}
+
+export function setHeader(header: HeaderState) {
+  setState({ header });
+}
+
+export function setFooterEditor(footerEditor: FooterEditorContext) {
+  setState({ footerEditor });
+}
+
+export function setFooterRuntime(footerRuntime: FooterRuntimeContext) {
+  setState({ footerRuntime });
+}
+
+export function setTodos(todos: TodoPhase[]) {
+  setState({ todos });
 }
 
 // ============================================================================

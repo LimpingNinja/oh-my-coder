@@ -27,7 +27,7 @@ export type TurnId = string;
  * Agent turns contain a flat sequence of events between agent_start/agent_end.
  */
 export type Turn =
-  | { kind: "user"; id: TurnId; timestamp: number; text: string }
+  | { kind: "user"; id: TurnId; timestamp: number; text: string; queuedAs?: "steer" | "followUp" }
   | { kind: "agent"; id: TurnId; timestamp: number; events: TurnEvent[]; active: boolean };
 
 /**
@@ -60,10 +60,30 @@ export interface ToolCallEvent {
   toolName: string;
   args: unknown;
   argsComplete: boolean;
-  status: "streaming" | "running" | "completed" | "error";
+  status: "streaming" | "running" | "completed" | "error" | "cancelled";
   intent?: string;
   result?: unknown;
   isError?: boolean;
+  /** Live progress for task/agent tool calls */
+  progress?: TaskProgress[];
+}
+
+/** Progress entry for a sub-agent within a task tool call */
+export interface TaskProgress {
+  index: number;
+  id: string;
+  agent: string;
+  status: "pending" | "running" | "completed" | "failed" | "aborted";
+  description?: string;
+  task?: string;
+  currentTool?: string;
+  currentToolArgs?: string;
+  lastIntent?: string;
+  toolCount?: number;
+  tokens?: number;
+  durationMs?: number;
+  recentTools?: { tool: string; args?: string; endMs?: number }[];
+  recentOutput?: string[];
 }
 
 export interface ToolResultEvent {

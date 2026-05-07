@@ -98,24 +98,32 @@ export class TranscriptManager {
   /**
    * Hydrate the transcript from a get_messages response (resume path).
    *
-   * Converts the raw ChatMessage[] from the runtime into TranscriptMessages,
-   * replaces the current state, and pushes chat.messagesLoaded to the webview.
+   * Passes the raw messages (with full content block arrays) to the webview
+   * so the turn reducer can reconstruct tool calls, thinking, and text from
+   * the original JSONL structure.  This includes toolResult messages which
+   * the reducer correlates with toolCall blocks by toolCallId.
    */
   hydrateFromMessages(messages: ChatMessage[]): void {
-    const transcriptMessages: TranscriptMessage[] = messages.map((raw) => {
-      const record = raw as Record<string, unknown>;
-      return {
-        id: (record.id as string) ?? (record.messageId as string) ?? generateMessageId(),
-        role: (record.role as "user" | "assistant" | "system") ?? "assistant",
-        content: extractTextContent(record.content),
-        thinking: extractThinkingContent(record.content),
-        streaming: false,
-        finalized: true,
-        startedAt: (record.timestamp as number) ?? (record.createdAt as number) ?? Date.now(),
-        finalizedAt: (record.timestamp as number) ?? (record.createdAt as number) ?? Date.now(),
-        toolCalls: [], // Historical tool calls are not reconstructed from get_messages
-      };
-    });
+    // Build host-side transcript state (text-only, for internal bookkeeping)
+    const transcriptMessages: TranscriptMessage[] = messages
+      .filter((raw) => {
+        const role = (raw as Record<string, unknown>).role as string;
+        return role === "user" || role === "assistant" || role === "system";
+      })
+      .map((raw) => {
+        const record = raw as Record<string, unknown>;
+        return {
+          id: (record.id as string) ?? (record.messageId as string) ?? generateMessageId(),
+          role: (record.role as "user" | "assistant" | "system") ?? "assistant",
+          content: extractTextContent(record.content),
+          thinking: extractThinkingContent(record.content),
+          streaming: false,
+          finalized: true,
+          startedAt: (record.timestamp as number) ?? (record.createdAt as number) ?? Date.now(),
+          finalizedAt: (record.timestamp as number) ?? (record.createdAt as number) ?? Date.now(),
+          toolCalls: [],
+        };
+      });
 
     this.state = {
       ...this.state,
@@ -124,8 +132,28 @@ export class TranscriptManager {
       agentActive: false,
     };
 
-    // Push the full history to the webview
-    const webviewMessages: ChatMessageForWebview[] = transcriptMessages.map(toWebviewMessage);
+    // Push the RAW messages to the webview — preserving content block arrays
+    // (toolCall, thinking, text blocks) and toolResult messages.  The webview
+    // turn reducer knows how to parse these into its turn/event model.
+    const webviewMessages: ChatMessageForWebview[] = messages.map((raw) => {
+      const record = raw as Record<string, unknown>;
+      const role = (record.role as string) ?? "assistant";
+      return {
+        id: (record.id as string) ?? (record.messageId as string) ?? generateMessageId(),
+        role: role as ChatMessageForWebview["role"],
+        // Pass raw content through — array of blocks for assistant messages,
+        // string or array for user/toolResult
+        content: record.content as string | unknown[],
+        timestamp: (record.timestamp as number) ?? (record.createdAt as number) ?? Date.now(),
+        // Preserve toolResult correlation fields
+        ...(role === "toolResult" && {
+          toolCallId: record.toolCallId,
+          toolName: record.toolName,
+          details: record.details,
+          isError: record.isError,
+        }),
+      };
+    });
 
     this.config.postToWebview({
       type: "chat.messagesLoaded",
@@ -133,7 +161,7 @@ export class TranscriptManager {
       messages: webviewMessages,
     });
 
-    this.log(`hydrated ${transcriptMessages.length} messages from get_messages`);
+    this.log(`hydrated ${webviewMessages.length} messages (${transcriptMessages.length} transcript + toolResults) from get_messages`);
   }
 
   /**
