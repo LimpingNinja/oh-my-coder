@@ -83,6 +83,8 @@ export interface OmpProcessConfig {
   env?: Record<string, string>;
   /** Working directory for the child process. */
   cwd?: string;
+  /** Extension file paths to pass via --extension. */
+  extensions?: string[];
   /** Startup timeout in milliseconds. Defaults to 30 000. */
   startupTimeoutMs?: number;
   /** Injectable spawn function for testing. */
@@ -147,6 +149,7 @@ export class OmpProcess {
   private env: Record<string, string>;
   private cwd: string | undefined;
   private spawnFn: OmpSpawnFn;
+  private extensions: string[];
   private stdinBuffer: string[] = [];
   private resolveStart: (() => void) | null = null;
   private rejectStart: ((error: Error) => void) | null = null;
@@ -155,6 +158,7 @@ export class OmpProcess {
     this.binaryPath = config?.binaryPath ?? "omp";
     this.env = config?.env ?? {};
     this.cwd = config?.cwd;
+    this.extensions = config?.extensions ?? [];
     this.startupTimeoutMs = config?.startupTimeoutMs ?? 30_000;
     this.spawnFn = config?.spawn ?? (spawn as OmpSpawnFn);
   }
@@ -222,6 +226,10 @@ export class OmpProcess {
     }
 
     const args = buildOmpRpcArgs(request);
+    // Append --extension flags for bridge and other extension files
+    for (const ext of this.extensions) {
+      args.push("--extension", ext);
+    }
     this._lifecycle = "starting";
     this.runId = runId;
     this.stderrBuffer = "";

@@ -67,6 +67,9 @@ let currentInterruptMode: string = "immediate";
 // Cached available models from get_available_models.
 let cachedAvailableModels: Array<Record<string, unknown>> = [];
 
+// Pending extension UI requests — buffered for webview delivery and response routing.
+const pendingUiRequests = new Map<string, { request: import("./protocol/webviewMessages.ts").ExtensionUiRequestForWebview; timestamp: number }>();
+
 /**
  * Start the OMP bridge server.
  *
@@ -103,6 +106,10 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
     case "webview.ready":
       outputChannel.appendLine("[omp] webview ready — pushing initial state");
       pushInitialState();
+      // Flush any buffered UI requests that arrived while webview was hidden
+      for (const [, entry] of pendingUiRequests) {
+        postToWebview({ type: "extensionUi.request", request: entry.request });
+      }
       break;
 
     case "sessions.refresh":
@@ -286,10 +293,22 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       }
       break;
 
-    case "extensionUi.respond":
-      // TODO: Wire extension_ui_response back to runtime (Phase 7)
-      outputChannel.appendLine(`[omp] extensionUi.respond: ${message.requestId} — not yet wired`);
+    case "extensionUi.respond": {
+      // Forward the user's response to the runtime via stdin
+      if (!rpcController) break;
+      const { requestId, response } = message as { requestId: string; response: Record<string, unknown> };
+      // Guard: ignore late responses for cancelled/expired requests
+      if (!pendingUiRequests.has(requestId)) {
+        outputChannel.appendLine(`[omp] extensionUi.respond: ignoring late response for ${requestId} (not pending)`);
+        break;
+      }
+      pendingUiRequests.delete(requestId);
+      const uiResponse = { ...response, type: "extension_ui_response", id: requestId } as import("./protocol/ompRpcTypes.ts").OmpExtensionUiResponse;
+      void rpcController.sendUiResponse(uiResponse).catch((err) => {
+        outputChannel.appendLine(`[omp] extensionUi.respond failed: ${err}`);
+      });
       break;
+    }
 
     case "input.focusRequested":
       outputChannel.appendLine("[omp] input.focusRequested");
@@ -437,6 +456,9 @@ async function launchSession(
     }
   }
 
+  // Clear pending UI requests from the dead process — stale entries must not persist
+  pendingUiRequests.clear();
+
   // Push launching state to the webview.
   currentLaunchState = {
     kind: "launching",
@@ -468,11 +490,15 @@ async function launchSession(
     : undefined;
   const env = createOmpEnvironment(bridgeConfig);
 
+  // Resolve path to the bundled bridge extension
+  const bridgeExtensionPath = vscode.Uri.joinPath(extensionUri, "bridge", "omp-vscode-bridge.js").fsPath;
+
   rpcController = new OmpRpcControllerImpl({
     process: {
       binaryPath: ompPath !== "omp" ? ompPath : undefined,
       cwd: request.workspaceFolder,
       env: env ?? undefined,
+      extensions: [bridgeExtensionPath],
     },
   });
 
@@ -853,10 +879,92 @@ function handleRuntimeFrame(frame: unknown): void {
       // Todos changed — refresh state to get updated todoPhases
       updateRuntimeStateFromController();
       break;
-    default:
-      // Other frames (response, extension_ui_request, etc.) are handled
-      // by controller correlation or deferred to later slices.
+    case "extension_ui_request":
+      handleExtensionUiRequest(frameObj as import("./protocol/ompRpcTypes.ts").OmpExtensionUiRequest);
       break;
+    default:
+      // Other frames (response, etc.) are handled by controller correlation.
+      break;
+  }
+}
+
+/**
+ * Handle an extension UI request from the runtime.
+ *
+ * Passive methods (notify, setStatus, setTitle, setWidget) are handled locally.
+ * Interactive methods (select, confirm, input, editor) are forwarded to the webview.
+ * The cancel method dismisses a pending dialog in the webview.
+ */
+function handleExtensionUiRequest(request: import("./protocol/ompRpcTypes.ts").OmpExtensionUiRequest): void {
+  const method = (request as Record<string, unknown>).method as string;
+  const id = (request as Record<string, unknown>).id as string;
+
+  switch (method) {
+    case "notify": {
+      const r = request as { message: string; notifyType?: "info" | "warning" | "error" };
+      const notifyType = r.notifyType ?? "info";
+      if (notifyType === "error") {
+        vscode.window.showErrorMessage(r.message);
+      } else if (notifyType === "warning") {
+        vscode.window.showWarningMessage(r.message);
+      } else {
+        vscode.window.showInformationMessage(r.message);
+      }
+      break;
+    }
+    case "setStatus":
+    case "setTitle":
+    case "setWidget":
+      // Deferred — log only
+      outputChannel.appendLine(`[omp] extensionUi.${method}: ${JSON.stringify(request)}`);
+      break;
+    case "set_editor_text": {
+      const r = request as { text: string };
+      postToWebview({ type: "extensionUi.setEditorText", text: r.text });
+      break;
+    }
+    case "cancel": {
+      const r = request as { targetId: string };
+      pendingUiRequests.delete(r.targetId);
+      postToWebview({ type: "extensionUi.cancel", targetId: r.targetId });
+      break;
+    }
+    case "select":
+    case "confirm":
+    case "input":
+    case "editor": {
+      // Interactive — forward to webview, track pending
+      const webviewRequest = mapToWebviewRequest(request);
+      pendingUiRequests.set(id, { request: webviewRequest, timestamp: Date.now() });
+      postToWebview({ type: "extensionUi.request", request: webviewRequest });
+      break;
+    }
+    default:
+      outputChannel.appendLine(`[omp] extensionUi: unknown method '${method}'`);
+      break;
+  }
+}
+
+/** Map raw RPC extension_ui_request to the webview-friendly shape. */
+function mapToWebviewRequest(
+  raw: import("./protocol/ompRpcTypes.ts").OmpExtensionUiRequest,
+): import("./protocol/webviewMessages.ts").ExtensionUiRequestForWebview {
+  const r = raw as Record<string, unknown>;
+  const method = r.method as string;
+  const requestId = r.id as string;
+
+  switch (method) {
+    case "select":
+      return { method: "select", requestId, title: r.title as string, options: r.options as string[], timeout: r.timeout as number | undefined };
+    case "confirm":
+      return { method: "confirm", requestId, title: r.title as string, message: r.message as string, timeout: r.timeout as number | undefined };
+    case "input":
+      return { method: "input", requestId, title: r.title as string, placeholder: r.placeholder as string | undefined, timeout: r.timeout as number | undefined };
+    case "editor":
+      return { method: "editor", requestId, title: r.title as string, prefill: r.prefill as string | undefined };
+    default:
+      // Should not reach here — caller filters to interactive methods
+      return { method: "select", requestId, title: "Unknown", options: [] };
   }
 }
 
@@ -1457,6 +1565,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Editor context listeners for footer ────────────────────────────────
   // Track active editor and selection to push file context to the webview footer.
+  // Text document changes are debounced to avoid per-keystroke message churn.
+  let textChangeTimer: ReturnType<typeof setTimeout> | undefined;
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => pushFooterState()),
     vscode.window.onDidChangeTextEditorSelection(() => pushFooterState()),
@@ -1464,10 +1574,12 @@ export async function activate(context: vscode.ExtensionContext) {
       // Only push if the changed doc is the active editor's document
       const active = vscode.window.activeTextEditor;
       if (active && e.document === active.document) {
-        pushFooterState();
+        if (textChangeTimer) clearTimeout(textChangeTimer);
+        textChangeTimer = setTimeout(() => pushFooterState(), 300);
       }
     }),
   );
+  context.subscriptions.push({ dispose: () => { if (textChangeTimer) clearTimeout(textChangeTimer); } });
 
   outputChannel.appendLine("[omp] activation complete");
 }

@@ -1,4 +1,11 @@
-import { useRef, useCallback, type KeyboardEvent } from "react";
+import { useRef, useCallback, useImperativeHandle, useEffect, forwardRef, type KeyboardEvent } from "react";
+
+export interface ComposerHandle {
+  /** Get the current trimmed value and clear the textarea */
+  consumeValue: () => string;
+  /** Set the textarea value (for set_editor_text from runtime) */
+  setValue: (text: string) => void;
+}
 
 interface ComposerProps {
   onSubmit: (content: string) => void;
@@ -6,18 +13,49 @@ interface ComposerProps {
   disabled?: boolean;
 }
 
-export function Composer({ onSubmit, placeholder = "Type a message...", disabled }: ComposerProps) {
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
+  { onSubmit, placeholder = "Type a message...", disabled },
+  ref,
+) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleSubmit = useCallback(() => {
+  const consumeValue = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return "";
+    const content = textarea.value.trim();
+    if (content) {
+      textarea.value = "";
+      textarea.style.height = "auto";
+    }
+    return content;
+  }, []);
+
+  const setValue = useCallback((text: string) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
-    const content = textarea.value.trim();
-    if (!content || disabled) return;
-    onSubmit(content);
-    textarea.value = "";
+    textarea.value = text;
     textarea.style.height = "auto";
-  }, [onSubmit, disabled]);
+    textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
+    textarea.focus();
+  }, []);
+
+  useImperativeHandle(ref, () => ({ consumeValue, setValue }));
+
+  // Listen for runtime set_editor_text events
+  useEffect(() => {
+    function handleSetText(e: Event) {
+      const detail = (e as CustomEvent<{ text: string }>).detail;
+      if (detail?.text != null) setValue(detail.text);
+    }
+    window.addEventListener("omp:setEditorText", handleSetText);
+    return () => window.removeEventListener("omp:setEditorText", handleSetText);
+  }, [setValue]);
+
+  const handleSubmit = useCallback(() => {
+    if (disabled) return;
+    const content = consumeValue();
+    if (content) onSubmit(content);
+  }, [onSubmit, disabled, consumeValue]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -51,4 +89,4 @@ export function Composer({ onSubmit, placeholder = "Type a message...", disabled
       </div>
     </div>
   );
-}
+});

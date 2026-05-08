@@ -25,10 +25,12 @@ export type TurnId = string;
  * A single turn in the conversation.
  * User turns contain one text event.
  * Agent turns contain a flat sequence of events between agent_start/agent_end.
+ * UI request turns are interactive dialogs from the runtime awaiting user response.
  */
 export type Turn =
   | { kind: "user"; id: TurnId; timestamp: number; text: string; queuedAs?: "steer" | "followUp" }
-  | { kind: "agent"; id: TurnId; timestamp: number; events: TurnEvent[]; active: boolean };
+  | { kind: "agent"; id: TurnId; timestamp: number; events: TurnEvent[]; active: boolean }
+  | { kind: "ui-request"; id: TurnId; timestamp: number; request: UiRequestData; response?: UiResponseData };
 
 /**
  * An event within an agent turn. Rendered sequentially, each by its own component.
@@ -109,6 +111,21 @@ export interface ErrorEvent {
   kind: "error";
   message: string;
 }
+
+// ============================================================================
+// Extension UI request/response types (inline turns)
+// ============================================================================
+
+export type UiRequestData =
+  | { method: "select"; requestId: string; title: string; options: string[]; timeout?: number }
+  | { method: "confirm"; requestId: string; title: string; message: string; timeout?: number }
+  | { method: "input"; requestId: string; title: string; placeholder?: string; timeout?: number }
+  | { method: "editor"; requestId: string; title: string; prefill?: string };
+
+export type UiResponseData =
+  | { kind: "value"; value: string }
+  | { kind: "confirmed"; confirmed: boolean }
+  | { kind: "cancelled" };
 
 // ============================================================================
 // Transcript state (turn-based)

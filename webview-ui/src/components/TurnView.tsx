@@ -10,6 +10,7 @@ import { ToolBlock } from "./ToolBlock";
 import { CodeBlock } from "./CodeBlock";
 import { Icon } from "./Icon";
 import { ClickableText } from "./ClickableText";
+import { UiRequestTurn } from "./UiRequestTurn";
 import { extractResultText, stripTaskSummaryXml } from "../utils/resultParser";
 import { getVSCodeAPI } from "../vscode";
 import { getState } from "../state/store";
@@ -24,6 +25,9 @@ interface TurnViewProps {
 export function TurnView({ turn }: TurnViewProps) {
   if (turn.kind === "user") {
     return <UserTurn text={turn.text} queuedAs={turn.queuedAs} />;
+  }
+  if (turn.kind === "ui-request") {
+    return <UiRequestTurn turnId={turn.id} request={turn.request} response={turn.response} />;
   }
   return <AgentTurn turn={turn} />;
 }

@@ -438,6 +438,20 @@ export class OmpRpcControllerImpl implements OmpRpcController {
     };
   }
 
+  /**
+   * Send an extension UI response directly to stdin without correlation.
+   *
+   * The response uses the runtime's original request ID — no generated ID,
+   * no pending request tracking, no timeout. Fire-and-forget write.
+   */
+  async sendUiResponse(response: import("../protocol/ompRpcTypes.ts").OmpExtensionUiResponse): Promise<void> {
+    this.assertNotDisposed();
+    if (!this.process || !this.isRunning()) {
+      throw new Error("Cannot send UI response: process not running");
+    }
+    await this.process.writeCommand(response);
+  }
+
   // ========================================================================
   // Internal — frame handling
   // ========================================================================

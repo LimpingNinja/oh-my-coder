@@ -846,7 +846,7 @@ body {
 }
 
 /* ── Delivery mode settings panel ───────────────────── */
-.omp-delivery-panel { min-width: 200px; }
+.omp-delivery-panel { min-width: 200px; z-index: 61; }
 .omp-delivery-setting {
   display: flex;
   flex-direction: column;
@@ -1193,4 +1193,182 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ============================================================================
+ * Extension UI Request Turns (inline dialog cards)
+ * ============================================================================ */
+
+.omp-turn-ui-request {
+  padding: 6px 12px;
+}
+
+.omp-ui-card {
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  padding: 12px;
+  max-width: 480px;
+}
+
+.omp-turn-ui-request--answered .omp-ui-card {
+  opacity: 0.75;
+}
+
+.omp-ui-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--vscode-foreground);
+}
+
+.omp-ui-card-header .codicon {
+  color: var(--vscode-textLink-foreground);
+  font-size: 14px;
+}
+
+.omp-ui-card-title {
+  flex: 1;
+}
+
+.omp-ui-card-body {
+  margin-bottom: 10px;
+}
+
+.omp-ui-card-message {
+  margin: 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.4;
+}
+
+.omp-ui-card-answer {
+  font-size: 12px;
+}
+
+.omp-ui-answer-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.omp-ui-answer-badge--cancelled {
+  background: var(--vscode-inputValidation-warningBackground, #5a4a00);
+  color: var(--vscode-inputValidation-warningForeground, #ccc);
+}
+
+.omp-ui-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.omp-ui-btn {
+  padding: 4px 12px;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.omp-ui-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.omp-ui-btn--primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.omp-ui-btn--primary:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.omp-ui-btn--primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.omp-ui-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--vscode-descriptionForeground);
+}
+
+.omp-ui-btn--ghost:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+/* Select options */
+.omp-ui-select-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.omp-ui-select-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.omp-ui-select-option:hover {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-list-hoverBackground);
+}
+
+/* Input/editor fields */
+.omp-ui-input {
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.omp-ui-input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.omp-ui-editor {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+  min-height: 80px;
+}
+
+.omp-ui-editor:focus {
+  border-color: var(--vscode-focusBorder);
 }

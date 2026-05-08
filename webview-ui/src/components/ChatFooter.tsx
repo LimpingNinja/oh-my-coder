@@ -1,7 +1,7 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useAppState, getState } from "../state/store";
 import { getVSCodeAPI } from "../vscode";
-import { Composer } from "./Composer";
+import { Composer, type ComposerHandle } from "./Composer";
 import { PillPopover } from "./PillPopover";
 import { SendButton } from "./SendButton";
 import { ModelSelector } from "./ModelSelector";
@@ -21,6 +21,7 @@ interface ChatFooterProps {
  */
 export function ChatFooter({ onSubmit, isStreaming }: ChatFooterProps) {
   const { footerEditor, footerRuntime, header } = useAppState();
+  const composerRef = useRef<ComposerHandle>(null);
 
   const handleNewSession = () => {
     const vscode = getVSCodeAPI();
@@ -53,6 +54,7 @@ export function ChatFooter({ onSubmit, isStreaming }: ChatFooterProps) {
 
       {/* Zone 2: Composer — never disabled, messages queue as steer/follow-up during streaming */}
       <Composer
+        ref={composerRef}
         onSubmit={onSubmit}
         placeholder={isStreaming ? "Send steering or follow-up message..." : "Type a message..."}
       />
@@ -120,15 +122,9 @@ export function ChatFooter({ onSubmit, isStreaming }: ChatFooterProps) {
             isStreaming={!!isStreaming}
             interruptMode={footerRuntime.interruptMode}
             onSend={(behavior) => {
-              // Trigger send from composer content
-              const textarea = document.querySelector<HTMLTextAreaElement>(".omp-composer textarea");
-              if (textarea) {
-                const content = textarea.value.trim();
-                if (content) {
-                  onSubmit(content, behavior);
-                  textarea.value = "";
-                  textarea.style.height = "auto";
-                }
+              const content = composerRef.current?.consumeValue() ?? "";
+              if (content) {
+                onSubmit(content, behavior);
               }
             }}
           />
@@ -190,6 +186,13 @@ function DeliveryModePill({ steeringMode, followUpMode, interruptMode }: Deliver
   const hoverTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vscode = getVSCodeAPI();
 
+  // Clean up hover timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+    };
+  }, []);
+
   const showHover = () => {
     if (open) return; // Don't show hover when settings panel is open
     if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
@@ -250,7 +253,9 @@ function DeliveryModePill({ steeringMode, followUpMode, interruptMode }: Deliver
 
       {/* Click panel — editable settings */}
       {open && (
-        <div className="omp-pill-popover omp-delivery-panel">
+        <>
+          <div className="omp-send-popup-backdrop" onClick={() => setOpen(false)} />
+          <div className="omp-pill-popover omp-delivery-panel">
           <div className="omp-popover-content">
             <div className="omp-popover-title">Queue Delivery Settings</div>
 
@@ -312,8 +317,8 @@ function DeliveryModePill({ steeringMode, followUpMode, interruptMode }: Deliver
             </div>
           </div>
         </div>
+        </>
       )}
-      {open && <div className="omp-send-popup-backdrop" onClick={() => setOpen(false)} />}
     </div>
   );
 }

@@ -10,7 +10,6 @@
  * Discriminated unions make illegal states unrepresentable.
  */
 
-import type { OmpExtensionUiResponse } from "./ompRpcTypes.ts";
 import type { OmpTodoPhase } from "./ompRpcTypes.ts";
 import type { OmpSessionListState, OmpSessionSummary } from "../session/types.ts";
 import type { OmpRuntimeState } from "./ompRpcTypes.ts";
@@ -109,8 +108,10 @@ export type WebviewToExtensionMessage =
   | { type: "runtime.setInterruptMode"; mode: "immediate" | "wait" }
 
   // ── Extension UI response ───────────────────────────────────────────
-  /** Respond to an extension UI request from the runtime. */
-  | { type: "extensionUi.respond"; requestId: string; response: OmpExtensionUiResponse }
+  /** Respond to an extension UI request from the runtime.
+   *  The response payload is a bare object ({ value, confirmed, or cancelled })
+   *  without the transport `type`/`id` fields — the host stamps those before sending to stdin. */
+  | { type: "extensionUi.respond"; requestId: string; response: { value: string } | { confirmed: boolean } | { cancelled: true } }
 
   // ── Focus ────────────────────────────────────────────────────────────
   /** Focus was requested (e.g. via command palette). */
@@ -191,6 +192,8 @@ export type ExtensionToWebviewMessage =
 
   // ── Extension UI request ─────────────────────────────────────────────
   | { type: "extensionUi.request"; request: ExtensionUiRequestForWebview }
+  | { type: "extensionUi.cancel"; targetId: string }
+  | { type: "extensionUi.setEditorText"; text: string }
 
   // ── Error ────────────────────────────────────────────────────────────
   | {
@@ -360,5 +363,7 @@ const extensionToWebviewTypes = new Set<string>([
   "footer.modes",
   "footer.thinkingSupport",
   "extensionUi.request",
+  "extensionUi.cancel",
+  "extensionUi.setEditorText",
   "error",
 ]);

@@ -27,21 +27,25 @@ export function ModelSelector({ open, onClose, currentModel }: ModelSelectorProp
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const requestId = useRef(0);
   const vscode = getVSCodeAPI();
 
-  // Fetch models when opened
+  // Fetch models when opened — use request counter to ignore stale responses
   useEffect(() => {
     if (!open) return;
     setSearch("");
     setLoading(true);
 
+    const thisRequest = ++requestId.current;
+
     // Request models from extension host
     vscode.postMessage({ type: "runtime.getAvailableModels" });
 
-    // Listen for response
+    // Listen for response — only accept if this is still the active request
     function handleMessage(event: MessageEvent) {
       const msg = event.data;
       if (msg?.type === "runtime.availableModels") {
+        if (thisRequest !== requestId.current) return; // Stale response, ignore
         setModels((msg.models as ModelEntry[]) || []);
         setLoading(false);
       }

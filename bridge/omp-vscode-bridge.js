@@ -807,4 +807,120 @@ export default function (pi) {
   ];
 
   for (const toolDefinition of tools) pi.registerTool(toolDefinition);
+
+  // ── Question tool ─────────────────────────────────────────────────────
+  // Provides the model with the ability to ask the user questions via the
+  // extension UI (select dialogs). Uses ctx.ui.select() which triggers
+  // extension_ui_request frames handled by the VS Code extension host.
+  pi.registerTool({
+    name: "question",
+    label: "Ask User",
+    executionMode: "sequential",
+    description:
+      "Use this tool when you need to ask the user questions during execution. " +
+      "This allows you to: 1. Gather user preferences or requirements, " +
+      "2. Clarify ambiguous instructions, 3. Get decisions on implementation choices as you work, " +
+      "4. Offer choices to the user about what direction to take.\n\n" +
+      "Usage notes:\n" +
+      "- When `custom` is enabled (default), a \"Type your own answer\" option is added automatically; don't include \"Other\" or catch-all options\n" +
+      "- Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one\n" +
+      "- If you recommend a specific option, make that the first option in the list and add \"(Recommended)\" at the end of the label\n" +
+      "- Header must be 30 characters or less (maxLength: 30)",
+    parameters: {
+      type: "object",
+      properties: {
+        questions: {
+          type: "array",
+          description: "Questions to ask",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              header: { type: "string", description: "Very short label (max 30 chars)" },
+              question: { type: "string", description: "Complete question" },
+              multiple: { type: "boolean", description: "Allow selecting multiple choices" },
+              options: {
+                type: "array",
+                description: "Available choices",
+                items: {
+                  type: "object",
+                  properties: {
+                    label: { type: "string", description: "Display text (1-5 words, concise)" },
+                    description: { type: "string", description: "Explanation of choice" },
+                  },
+                  required: ["label", "description"],
+                },
+              },
+            },
+            required: ["question", "header", "options"],
+          },
+        },
+      },
+      required: ["questions"],
+      additionalProperties: false,
+    },
+    execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
+      if (!ctx?.hasUI || !ctx.ui) {
+        return {
+          content: [{ type: "text", text: "Question tool requires interactive UI context" }],
+          details: {},
+          isError: true,
+        };
+      }
+
+      const results = [];
+      for (const q of params.questions) {
+        const options = q.options.map((o) => o.label);
+        // Add "Type your own answer" option for custom input
+        const allOptions = [...options, "Type your own answer"];
+
+        let selected;
+        try {
+          selected = await ctx.ui.select(q.question, allOptions, { signal });
+        } catch (err) {
+          if (err?.name === "AbortError") {
+            return {
+              content: [{ type: "text", text: "Question was cancelled by the user" }],
+              details: {},
+              isError: true,
+            };
+          }
+          throw err;
+        }
+
+        if (selected === undefined) {
+          return {
+            content: [{ type: "text", text: "Question was cancelled by the user" }],
+            details: {},
+            isError: true,
+          };
+        }
+
+        if (selected === "Type your own answer") {
+          // Request custom text input via editor
+          const customText = await ctx.ui.editor(q.header || "Your answer", undefined, { signal });
+          results.push({
+            question: q.question,
+            answer: customText || "(empty)",
+            isCustom: true,
+          });
+        } else {
+          results.push({
+            question: q.question,
+            answer: selected,
+            isCustom: false,
+          });
+        }
+      }
+
+      const summary = results
+        .map((r) => `${r.question}\n→ ${r.answer}${r.isCustom ? " (custom)" : ""}`)
+        .join("\n\n");
+
+      return {
+        content: [{ type: "text", text: summary }],
+        details: { results },
+      };
+    },
+  });
 }

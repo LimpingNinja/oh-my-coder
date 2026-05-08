@@ -28,6 +28,8 @@ import {
 } from "../state/store";
 import { processTurnMessage } from "../state/turnReducer";
 import { createEmptyTurnTranscript } from "../state/turns";
+import type { UiRequestData, UiResponseData } from "../state/turns";
+import { generateTurnId } from "../state/turns";
 
 export function useMessageHandler() {
   useEffect(() => {
@@ -245,11 +247,15 @@ export function useMessageHandler() {
                 });
               } else if (item.source === "ompRuntime" && item.kind === "runtime") {
                 const { footerRuntime } = getState();
+                const newModel = item.model as string | undefined;
+                const modelChanged = newModel !== undefined && newModel !== footerRuntime.model;
                 setFooterRuntime({
                   ...footerRuntime,
                   state: (item.state as FooterRuntimeContext["state"]) || "ready",
-                  model: item.model as string | undefined,
+                  model: newModel,
                   thinking: item.thinking as string | undefined,
+                  // Reset thinking support when model changes — will be re-confirmed by footer.thinkingSupport
+                  ...(modelChanged ? { thinkingSupported: false, thinkingMinLevel: undefined, thinkingMaxLevel: undefined } : {}),
                 });
               }
             }
@@ -276,6 +282,47 @@ export function useMessageHandler() {
             thinkingMinLevel: msg.minLevel as string | undefined,
             thinkingMaxLevel: msg.maxLevel as string | undefined,
           });
+          break;
+        }
+
+        case "extensionUi.request": {
+          // Add as a ui-request turn in the transcript
+          const request = msg.request as UiRequestData;
+          const { turnTranscript } = getState();
+          setTurnTranscript({
+            ...turnTranscript,
+            turns: [
+              ...turnTranscript.turns,
+              {
+                kind: "ui-request",
+                id: generateTurnId(),
+                timestamp: Date.now(),
+                request,
+                response: undefined,
+              },
+            ],
+          });
+          break;
+        }
+
+        case "extensionUi.cancel": {
+          // Remove the pending ui-request turn (or mark it cancelled)
+          const targetId = msg.targetId as string;
+          const { turnTranscript } = getState();
+          const turns = turnTranscript.turns.map((t) => {
+            if (t.kind === "ui-request" && t.request.requestId === targetId && !t.response) {
+              return { ...t, response: { kind: "cancelled" as const } };
+            }
+            return t;
+          });
+          setTurnTranscript({ ...turnTranscript, turns });
+          break;
+        }
+
+        case "extensionUi.setEditorText": {
+          // Dispatch a custom event that the Composer can listen for
+          const text = msg.text as string;
+          window.dispatchEvent(new CustomEvent("omp:setEditorText", { detail: { text } }));
           break;
         }
       }

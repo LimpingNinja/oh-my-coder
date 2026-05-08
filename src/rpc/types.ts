@@ -9,6 +9,7 @@
 import type {
   ChatMessage,
   ImageContent,
+  OmpExtensionUiResponse,
   OmpRpcCommand,
   OmpRpcFrame,
   OmpRuntimeState,
@@ -108,6 +109,14 @@ export interface OmpRpcController {
 
   /** Register a listener for all outbound frames. Returns a disposable subscription. */
   onFrame(listener: (frame: OmpRpcFrame) => void): Disposable;
+
+  /**
+   * Send an extension UI response directly to the runtime's stdin.
+   *
+   * Unlike `send()`, this does NOT generate an ID or correlate responses.
+   * The response uses the runtime's original request ID verbatim.
+   */
+  sendUiResponse(response: OmpExtensionUiResponse): Promise<void>;
 }
 
 /** Minimal disposable contract for frame subscriptions. */
