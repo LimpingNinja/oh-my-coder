@@ -1372,3 +1372,40 @@ body {
 .omp-ui-editor:focus {
   border-color: var(--vscode-focusBorder);
 }
+
+/* Hidden tool block placeholder (stable DOM element, no visual presence) */
+.omp-tool-hidden {
+  display: none;
+}
+
+/* Question tool summary (completed state) */
+.omp-question-summary-title {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.omp-question-summary-count {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+.omp-question-summary-body {
+  padding: 8px 12px 8px 28px;
+}
+
+.omp-question-summary-item {
+  margin-bottom: 10px;
+}
+
+.omp-question-summary-item:last-child {
+  margin-bottom: 0;
+}
+
+.omp-question-summary-q {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  margin-bottom: 4px;
+  line-height: 1.4;
+}

@@ -77,6 +77,17 @@ export function ToolBlock({ toolCall }: ToolBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const { toolName, status, args, intent, result, isError } = toolCall;
 
+  // Question tool: suppress the block while running (the UiRequestTurn cards handle it).
+  // Always render a stable element (never null) to avoid React hook ordering issues.
+  if (toolName === "question" && status === "running") {
+    return <div className="omp-tool-block omp-tool-hidden" aria-hidden="true" />;
+  }
+
+  // Question tool completed: render the Q&A summary
+  if (toolName === "question" && (status === "completed" || status === "error")) {
+    return <QuestionToolSummary result={result} isError={isError} isExpanded={isExpanded} setIsExpanded={setIsExpanded} />;
+  }
+
   const display = useMemo(() => getToolDisplay(toolName), [toolName]);
   const filename = useMemo(() => extractFilename(args), [args]);
   const command = useMemo(() => extractCommand(args), [args]);
@@ -177,4 +188,90 @@ function renderResult(
     default:
       return <GenericResult result={result} />;
   }
+}
+
+// ── Question Tool Summary ────────────────────────────────────────────────────
+
+interface QuestionToolSummaryProps {
+  result: unknown;
+  isError?: boolean;
+  isExpanded: boolean;
+  setIsExpanded: (v: boolean) => void;
+}
+
+function QuestionToolSummary({ result, isError, isExpanded, setIsExpanded }: QuestionToolSummaryProps) {
+  const answers = parseQuestionResults(result);
+  const total = answers.length;
+
+  if (isError || total === 0) {
+    return (
+      <div className="omp-tool-block omp-tool-error">
+        <div className="omp-tool-header" role="button" tabIndex={0} onClick={() => setIsExpanded(!isExpanded)}>
+          <Icon name={isExpanded ? "chevron-down" : "chevron-right"} className="omp-tool-chevron" />
+          <Icon name="error" className="omp-tool-status-icon omp-tool-status-error" />
+          <Icon name="comment-discussion" className="omp-tool-action-icon" />
+          <span className="omp-question-summary-title">Questions</span>
+          <span className="omp-question-summary-count">cancelled</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="omp-tool-block omp-tool-completed">
+      <div
+        className="omp-tool-header"
+        role="button"
+        tabIndex={0}
+        onClick={() => setIsExpanded(!isExpanded)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setIsExpanded(!isExpanded); }}
+      >
+        <Icon name={isExpanded ? "chevron-down" : "chevron-right"} className="omp-tool-chevron" />
+        <Icon name="pass" className="omp-tool-status-icon omp-tool-status-completed" />
+        <Icon name="comment-discussion" className="omp-tool-action-icon" />
+        <span className="omp-question-summary-title">Questions</span>
+        <span className="omp-question-summary-count">{total} answered</span>
+      </div>
+      {isExpanded && (
+        <div className="omp-tool-body omp-question-summary-body">
+          {answers.map((a, i) => (
+            <div key={i} className="omp-question-summary-item">
+              <div className="omp-question-summary-q">{a.question}</div>
+              <span className="omp-ui-answer-badge">{a.answer}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function parseQuestionResults(result: unknown): Array<{ question: string; answer: string }> {
+  if (!result) return [];
+  const r = result as Record<string, unknown>;
+  // Try details.results (our bridge format)
+  if (r.details && typeof r.details === "object") {
+    const details = r.details as Record<string, unknown>;
+    if (Array.isArray(details.results)) {
+      return details.results.map((item: any) => ({
+        question: item.question ?? "",
+        answer: item.answer ?? item.selectedOptions?.[0] ?? "",
+      }));
+    }
+  }
+  // Fallback: parse from content text ("Q\n→ A\n\nQ\n→ A" format)
+  if (r.content && Array.isArray(r.content)) {
+    const text = (r.content as Array<{ type: string; text?: string }>)
+      .filter((b) => b.type === "text" && b.text)
+      .map((b) => b.text)
+      .join("\n");
+    const pairs = text.split("\n\n").filter(Boolean);
+    return pairs.map((pair) => {
+      const lines = pair.split("\n");
+      const question = lines[0] ?? "";
+      const answer = lines[1]?.replace(/^→\s*/, "") ?? "";
+      return { question, answer };
+    });
+  }
+  return [];
 }
