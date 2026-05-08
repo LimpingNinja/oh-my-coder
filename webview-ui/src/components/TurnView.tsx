@@ -23,13 +23,17 @@ interface TurnViewProps {
 }
 
 export function TurnView({ turn }: TurnViewProps) {
-  if (turn.kind === "user") {
-    return <UserTurn text={turn.text} queuedAs={turn.queuedAs} />;
-  }
-  if (turn.kind === "ui-request") {
-    return <UiRequestTurn turnId={turn.id} request={turn.request} response={turn.response} />;
-  }
-  return <AgentTurn turn={turn} />;
+  return (
+    <div data-turn-id={turn.id}>
+      {turn.kind === "user" ? (
+        <UserTurn text={turn.text} queuedAs={turn.queuedAs} />
+      ) : turn.kind === "ui-request" ? (
+        <UiRequestTurn turnId={turn.id} request={turn.request} response={turn.response} />
+      ) : (
+        <AgentTurn turn={turn} />
+      )}
+    </div>
+  );
 }
 
 function UserTurn({ text, queuedAs }: { text: string; queuedAs?: "steer" | "followUp" }) {

@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useAppState } from "../state/store";
 import { getVSCodeAPI } from "../vscode";
 import { SessionPanel } from "./SessionPanel";
+import { TaskWaveform } from "./TaskWaveform";
 
 /** Inline OMP logo — 20px variant, inherits currentColor for theming. */
 function OmpLogo({ size = 20 }: { size?: number }) {
@@ -36,7 +37,7 @@ function OmpLogo({ size = 20 }: { size?: number }) {
  */
 export function ChatHeader() {
   const { header, todos } = useAppState();
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(true);
   const [todosExpanded, setTodosExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -79,6 +80,25 @@ export function ChatHeader() {
     }
   }, [header.sessionPath]);
 
+  const handleScrollToTurn = useCallback((turnId: string) => {
+    // Find the turn's DOM element in the transcript and scroll to it
+    const el = document.querySelector(`[data-turn-id="${turnId}"]`) as HTMLElement | null;
+    if (!el) return;
+    // Find the scrollable transcript container
+    const container = el.closest(".omp-transcript") as HTMLElement | null;
+    if (container) {
+      // Calculate scroll position to center the element
+      const elTop = el.offsetTop - container.offsetTop;
+      const centerOffset = elTop - container.clientHeight / 2 + el.clientHeight / 2;
+      container.scrollTo({ top: centerOffset, behavior: "smooth" });
+    } else {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    // Brief highlight flash
+    el.classList.add("omp-turn--highlight");
+    setTimeout(() => el.classList.remove("omp-turn--highlight"), 1500);
+  }, []);
+
   // Flatten all todo tasks across phases
   const allTasks = todos.flatMap((phase) => phase.tasks);
   const completedCount = allTasks.filter((t) => t.status === "completed" || t.status === "done").length;
@@ -113,17 +133,17 @@ export function ChatHeader() {
             )}
           </div>
           <div className="omp-header-right">
-            <span className="omp-header-cost" title="Session cost">
+            <span className="omp-header-cost" data-tip={header.costUsd != null ? `Total: $${header.costUsd.toFixed(4)}` : undefined}>
               {header.costUsd != null ? `$${header.costUsd.toFixed(2)}` : "—"}
             </span>
-            <span className="omp-header-context" title="Context window usage">
+            <span className="omp-header-context" data-tip={header.contextPercent != null ? `Context: ${header.contextPercent}% used` : undefined}>
               {header.contextPercent != null ? `${header.contextPercent}%` : "—"}
             </span>
             {header.canCompact && (
               <button
                 className="omp-icon-btn-circle"
                 onClick={handleCompact}
-                title="Compact context"
+                data-tip="Compact"
                 aria-label="Compact context"
               >
                 <i className="codicon codicon-fold" />
@@ -132,7 +152,7 @@ export function ChatHeader() {
             <button
               className="omp-icon-btn-circle"
               onClick={handleOpenTranscript}
-              title="Open in editor"
+              data-tip="Open in editor"
               aria-label="Open transcript in editor"
             >
               <i className="codicon codicon-go-to-file" />
@@ -140,7 +160,7 @@ export function ChatHeader() {
             <button
               className="omp-icon-btn-circle"
               onClick={() => setSessionPanelOpen(true)}
-              title="Switch session"
+              data-tip="Sessions"
               aria-label="Switch session"
             >
               <i className="codicon codicon-history" />
@@ -148,7 +168,7 @@ export function ChatHeader() {
             <button
               className="omp-icon-btn-circle"
               onClick={() => setDetailsOpen(!detailsOpen)}
-              title={detailsOpen ? "Hide details" : "Show details"}
+              data-tip={detailsOpen ? "Hide details" : "Details"}
               aria-label="Toggle token details"
               aria-expanded={detailsOpen}
             >
@@ -157,16 +177,31 @@ export function ChatHeader() {
           </div>
         </div>
 
-        {/* Row 2: expandable token details */}
+        {/* Row 2: expandable token details with waveform + context progress bar */}
         {detailsOpen && (
           <div className="omp-header-details">
+            <TaskWaveform onScrollToTurn={handleScrollToTurn} />
             {header.tokens ? (
-              <span className="omp-header-tokens">
-                Tokens{" "}
-                <span className="omp-token-up">↑ {formatTokenCount(header.tokens.input)}</span>{" "}
-                <span className="omp-token-down">↓ {formatTokenCount(header.tokens.output)}</span>{" "}
-                <span className="omp-token-cache">⟳ {formatTokenCount(header.tokens.cacheRead)}</span>
-              </span>
+              <>
+                <div className="omp-context-progress">
+                  <span className="omp-context-count">{formatTokenCount(header.tokens.input + header.tokens.output)}</span>
+                  <div
+                    className="omp-context-bar"
+                    title={`Used: ${formatTokenCount(header.tokens.input + header.tokens.output)} | Cache: ${formatTokenCount(header.tokens.cacheRead)} | Context: ${header.contextPercent ?? "?"}%`}
+                  >
+                    <div
+                      className={`omp-context-used ${(header.contextPercent ?? 0) >= 50 ? "omp-context-used--hot" : ""}`}
+                      style={{ width: `${Math.min(header.contextPercent ?? 0, 100)}%` }}
+                    />
+                  </div>
+                  <span className="omp-context-count omp-context-count--muted">{header.contextPercent ?? 0}%</span>
+                </div>
+                <div className="omp-header-tokens">
+                  <span className="omp-token-up" title="Input tokens">↑ {formatTokenCount(header.tokens.input)}</span>
+                  <span className="omp-token-down" title="Output tokens">↓ {formatTokenCount(header.tokens.output)}</span>
+                  <span className="omp-token-cache" title="Cache read tokens">⟳ {formatTokenCount(header.tokens.cacheRead)}</span>
+                </div>
+              </>
             ) : (
               <span className="omp-header-tokens omp-header-tokens--unavailable">
                 Token data unavailable
