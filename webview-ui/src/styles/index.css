@@ -569,20 +569,30 @@ body {
 /* ── Read result ───────────────────────────────────── */
 .omp-tool-result-read { }
 .omp-tool-range-info { padding: 4px 10px; font-size: 10px; color: var(--omp-muted); }
-.omp-read-code-view { display: flex; overflow-x: auto; background: var(--vscode-editor-background); }
-.omp-read-gutter { flex-shrink: 0; padding: 8px 0; user-select: none; }
+.omp-read-code-view {
+  display: flex; overflow-x: auto;
+  border-radius: 3px;
+}
+.omp-read-gutter {
+  flex-shrink: 0; padding: 8px 0; user-select: none;
+  border-right: 1px solid var(--vscode-editorLineNumber-foreground, rgba(255,255,255,0.1));
+}
 .omp-read-line-num {
   padding: 0 8px 0 10px; font-family: var(--vscode-editor-font-family, monospace);
   font-size: var(--vscode-editor-font-size, 12px); line-height: 1.5;
-  color: var(--omp-muted); text-align: right; min-width: 28px;
+  color: var(--vscode-editorLineNumber-foreground, var(--omp-muted)); text-align: right; min-width: 28px;
 }
 .omp-read-code {
-  flex: 1; margin: 0; padding: 8px 10px; overflow-x: auto;
+  flex: 1; overflow-x: auto; padding: 8px 10px;
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: var(--vscode-editor-font-size, 12px); line-height: 1.5;
-  white-space: pre; color: var(--omp-fg); background: transparent;
 }
-.omp-read-code code { font-family: inherit; }
+.omp-read-code pre { margin: 0; background: transparent; }
+.omp-read-code code { font-family: inherit; white-space: pre; }
+.omp-read-fallback {
+  margin: 0; background: transparent; white-space: pre;
+  color: var(--vscode-editor-foreground, var(--omp-fg));
+}
 
 /* ── Edit/Diff result ──────────────────────────────── */
 .omp-tool-result-edit { }

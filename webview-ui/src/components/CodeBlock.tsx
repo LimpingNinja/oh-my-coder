@@ -190,3 +190,60 @@ function normalizeLanguage(lang: string): string {
   };
   return aliases[lang.toLowerCase()] || lang.toLowerCase();
 }
+
+// ── Exported utilities for other components ────────────────────────────
+
+/**
+ * Highlight code using the shared Shiki instance.
+ * Returns a ReactNode with syntax-highlighted spans, or null if not ready.
+ */
+export async function highlightCode(code: string, language: string): Promise<ReactNode | null> {
+  const lang = normalizeLanguage(language);
+  try {
+    const highlighter = await getHighlighterInstance(lang);
+    const resolvedLang = state.loadedLanguages.has(lang) ? lang : "text";
+
+    const hast = highlighter.codeToHast(code, {
+      lang: resolvedLang as BundledLanguage,
+      theme: getTheme(),
+      transformers: [
+        {
+          pre(node) {
+            node.properties.style = "margin:0;padding:0;background:transparent;overflow-x:auto;";
+            return node;
+          },
+          code(node) {
+            node.properties.style = "font-family:inherit;";
+            return node;
+          },
+        } as ShikiTransformer,
+      ],
+    });
+
+    return toJsxRuntime(hast, {
+      Fragment,
+      jsx: jsx as any,
+      jsxs: jsxs as any,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Guess a language from a file path extension.
+ */
+export function guessLanguageFromPath(path: string | null): string {
+  if (!path) return "text";
+  const ext = path.split(".").pop()?.toLowerCase() || "";
+  const map: Record<string, string> = {
+    ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
+    py: "python", rb: "ruby", rs: "rust", go: "go", lua: "lua",
+    c: "c", h: "c", cpp: "cpp", cs: "csharp", java: "java",
+    sh: "bash", yml: "yaml", yaml: "yaml", json: "json", jsonl: "json",
+    toml: "toml", md: "markdown", html: "html", css: "css", sql: "sql",
+    txt: "text", xml: "xml", swift: "swift", kt: "kotlin", r: "r",
+    zig: "zig", lpc: "c",
+  };
+  return map[ext] || "text";
+}

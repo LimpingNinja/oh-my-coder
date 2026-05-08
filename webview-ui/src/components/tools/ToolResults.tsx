@@ -5,11 +5,12 @@
  * and displays it meaningfully instead of dumping raw JSON.
  */
 
-import { useState } from "react";
-import { CodeBlock } from "../CodeBlock";
+import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { Icon } from "../Icon";
 import { ClickableText } from "../ClickableText";
 import { openFileInEditor } from "../../utils/resultParser";
+import { highlightCode, guessLanguageFromPath } from "../CodeBlock";
 
 // ============================================================================
 // Hashline parsing
@@ -66,15 +67,56 @@ export function ReadResult({ result, filename }: ReadResultProps) {
   const r = result as Record<string, unknown> | null;
   if (!r) return null;
 
-  const content = extractText(r);
   const details = r.details as Record<string, unknown> | undefined;
   const meta = details?.meta as Record<string, unknown> | undefined;
   const truncation = meta?.truncation as Record<string, unknown> | undefined;
   const shownRange = truncation?.shownRange as { start: number; end: number } | undefined;
 
+  // Prefer displayContent.text (pre-cleaned by runtime, no hashlines)
+  const displayContent = details?.displayContent as { text?: string; startLine?: number } | undefined;
+  let content: string | null;
+  let startLineHint: number | undefined;
+
+  if (displayContent?.text) {
+    content = displayContent.text;
+    startLineHint = displayContent.startLine ?? shownRange?.start;
+  } else {
+    content = extractText(r);
+    startLineHint = shownRange?.start;
+  }
+
   if (!content) return null;
 
-  const { lines, startLine } = parseReadContent(content, shownRange?.start);
+  const { lines, startLine } = parseReadContent(content, startLineHint);
+  const language = guessLanguageFromPath(filename);
+
+  return (
+    <ReadCodeView
+      lines={lines}
+      startLine={startLine}
+      language={language}
+      shownRange={shownRange}
+    />
+  );
+}
+
+/** Syntax-highlighted code view with line numbers for read results */
+function ReadCodeView({ lines, startLine, language, shownRange }: {
+  lines: string[];
+  startLine: number;
+  language: string;
+  shownRange?: { start: number; end: number };
+}) {
+  const [highlighted, setHighlighted] = useState<ReactNode | null>(null);
+  const code = lines.join("\n");
+
+  useEffect(() => {
+    let cancelled = false;
+    highlightCode(code, language).then((result) => {
+      if (!cancelled) setHighlighted(result);
+    });
+    return () => { cancelled = true; };
+  }, [code, language]);
 
   return (
     <div className="omp-tool-result-read">
@@ -89,9 +131,9 @@ export function ReadResult({ result, filename }: ReadResultProps) {
             <div key={i} className="omp-read-line-num">{startLine + i}</div>
           ))}
         </div>
-        <pre className="omp-read-code">
-          <code>{lines.join("\n")}</code>
-        </pre>
+        <div className="omp-read-code">
+          {highlighted || <pre className="omp-read-fallback"><code>{code}</code></pre>}
+        </div>
       </div>
     </div>
   );
@@ -100,26 +142,48 @@ export function ReadResult({ result, filename }: ReadResultProps) {
 /** Parse read content, stripping hashline prefixes and extracting start line */
 function parseReadContent(text: string, rangeStart?: number): { lines: string[]; startLine: number } {
   const rawLines = text.split("\n");
-  const hashlineRegex = /^(\*| )?(\d+)\w{0,4}\|(.*)$/;
+  // OMP hashline format: optional marker (*/ ), digits, 2-4 lowercase alpha hash, pipe, content
+  // Examples: "1hu|code", " 35ab|code", "*12xy|highlighted"
+  const hashlineRegex = /^([* ])?(\d+)([a-z]{2,4})\|(.*)$/;
 
   let startLine = rangeStart || 1;
   const lines: string[] = [];
   let firstLineNum: number | null = null;
+  let hashlineCount = 0;
+
+  // First pass: check if this is actually hashline-formatted content
+  // (avoid false positives on files that happen to have number|text patterns)
+  const sampleSize = Math.min(rawLines.length, 10);
+  let sampleMatches = 0;
+  for (let i = 0; i < sampleSize; i++) {
+    if (rawLines[i] && hashlineRegex.test(rawLines[i]!)) sampleMatches++;
+  }
+  const isHashlineFormat = sampleMatches >= Math.ceil(sampleSize * 0.6);
 
   for (const line of rawLines) {
-    // Skip meta notices like "[Showing lines...]"
+    // Skip meta notices
     if (line.startsWith("[Showing lines") || line.startsWith("[Read artifact")) continue;
+    if (line.startsWith("[") && line.endsWith("]") && line.includes("lines")) continue;
 
-    const match = line.match(hashlineRegex);
-    if (match) {
-      if (firstLineNum === null) firstLineNum = parseInt(match[2]!, 10);
-      lines.push(match[3] || "");
-    } else {
-      lines.push(line);
+    if (isHashlineFormat) {
+      const match = line.match(hashlineRegex);
+      if (match) {
+        if (firstLineNum === null) firstLineNum = parseInt(match[2]!, 10);
+        lines.push(match[4] ?? "");
+        hashlineCount++;
+        continue;
+      }
     }
+    lines.push(line);
   }
 
-  if (firstLineNum !== null) startLine = firstLineNum;
+  if (firstLineNum !== null && hashlineCount > 0) startLine = firstLineNum;
+
+  // Remove trailing empty lines
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
   return { lines, startLine };
 }
 
@@ -392,18 +456,4 @@ function extractText(r: Record<string, unknown>): string | null {
   if (typeof r.text === "string") return r.text;
   if (typeof r.content === "string") return r.content;
   return null;
-}
-
-function guessLanguageFromPath(path: string | null): string {
-  if (!path) return "text";
-  const ext = path.split(".").pop()?.toLowerCase() || "";
-  const map: Record<string, string> = {
-    ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
-    py: "python", rb: "ruby", rs: "rust", go: "go", lua: "lua",
-    c: "c", h: "c", cpp: "cpp", cs: "csharp", java: "java",
-    sh: "bash", yml: "yaml", yaml: "yaml", json: "json", jsonl: "json",
-    toml: "toml", md: "markdown", html: "html", css: "css", sql: "sql",
-    txt: "text",
-  };
-  return map[ext] || "text";
 }
