@@ -397,7 +397,7 @@ body {
 .omp-user-bubble {
   background: var(--vscode-button-background); color: var(--vscode-button-foreground);
   border-radius: 8px 8px 2px 8px; display: inline-block; padding: 8px 12px;
-  font-size: 13px; line-height: 1.5; max-width: 80%;
+  font-size: 13px; line-height: 1.5; max-width: 80%; white-space: pre-wrap; word-wrap: break-word;
 }
 .omp-user-bubble--queued {
   background: color-mix(in srgb, var(--vscode-button-background) 60%, var(--omp-bg));
@@ -594,6 +594,53 @@ body {
   color: var(--vscode-editor-foreground, var(--omp-fg));
 }
 
+/* ── Search result ─────────────────────────────────── */
+.omp-tool-result-search { padding: 6px 12px; }
+.omp-search-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.omp-search-stat { font-size: 12px; color: var(--vscode-descriptionForeground); }
+.omp-search-stat strong { color: var(--vscode-foreground); }
+.omp-search-truncated { font-size: 11px; color: var(--vscode-inputValidation-warningForeground, #cca700); }
+.omp-search-toggle {
+  background: transparent; border: none; color: var(--vscode-descriptionForeground);
+  cursor: pointer; padding: 2px; display: flex; align-items: center;
+}
+.omp-search-toggle:hover { color: var(--vscode-foreground); }
+.omp-search-groups { }
+.omp-search-group { margin-bottom: 8px; }
+.omp-search-group:last-child { margin-bottom: 0; }
+.omp-search-group-header {
+  display: flex; align-items: center; gap: 6px; padding: 3px 0;
+  font-size: 12px;
+}
+.omp-search-file-icon { font-size: 12px; color: var(--vscode-descriptionForeground); flex-shrink: 0; }
+.omp-search-group-count {
+  font-size: 10px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
+  border-radius: 8px; padding: 1px 5px; min-width: 14px; text-align: center;
+}
+.omp-search-snippet {
+  margin-left: 22px; border-left: 2px solid var(--vscode-editorLineNumber-foreground, rgba(255,255,255,0.1));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 12px); line-height: 1.5;
+}
+.omp-search-line {
+  display: flex; white-space: pre;
+}
+.omp-search-line--match {
+  background: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.15));
+}
+.omp-search-line-num {
+  flex-shrink: 0; padding: 0 8px; min-width: 28px; text-align: right;
+  color: var(--vscode-editorLineNumber-foreground, var(--omp-muted));
+  user-select: none;
+}
+.omp-search-line-content { flex: 1; padding-right: 8px; }
+.omp-search-file-list { padding-left: 4px; }
+.omp-search-file-item {
+  display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12px;
+}
+
 /* ── Edit/Diff result ──────────────────────────────── */
 .omp-tool-result-edit { }
 .omp-edit-status { padding: 6px 10px; font-size: 12px; color: var(--omp-success); }
@@ -622,14 +669,107 @@ body {
 .omp-bash-output { margin: 0; padding: 8px 10px; font-size: 11px; max-height: 300px; overflow: auto; white-space: pre-wrap; font-family: var(--vscode-editor-font-family, monospace); color: var(--omp-fg); }
 
 /* ── Find result ───────────────────────────────────── */
-.omp-tool-result-find { padding: 8px 10px; }
-.omp-find-summary { font-size: 12px; color: var(--omp-muted); margin-bottom: 4px; }
+.omp-tool-result-find { padding: 6px 12px; }
+.omp-find-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.omp-find-stat { font-size: 12px; color: var(--vscode-descriptionForeground); }
+.omp-find-stat strong { color: var(--vscode-foreground); }
 .omp-find-list { }
-.omp-find-item { padding: 1px 0; font-size: 12px; }
+.omp-find-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0; font-size: 12px;
+}
+.omp-find-file-icon { font-size: 12px; color: var(--vscode-descriptionForeground); flex-shrink: 0; }
 .omp-find-more { padding: 4px 0; font-size: 11px; color: var(--omp-muted); font-style: italic; }
 
 /* ── Generic result ────────────────────────────────── */
-.omp-tool-result-generic { padding: 4px 10px; }
+.omp-tool-result-generic { padding: 6px 12px; }
+.omp-generic-text {
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+  color: var(--vscode-foreground);
+}
+
+/* Smart JSON renderer */
+.omp-smart-json-kv { }
+.omp-smart-json-row {
+  display: flex; gap: 8px; padding: 2px 0; font-size: 12px;
+}
+.omp-smart-json-key {
+  flex-shrink: 0; color: var(--vscode-descriptionForeground); min-width: 80px;
+}
+.omp-smart-json-value {
+  color: var(--vscode-foreground); word-break: break-word;
+}
+.omp-smart-json-list { }
+.omp-smart-json-item {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline;
+  padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 12px;
+}
+.omp-smart-json-item:last-child { border-bottom: none; }
+.omp-smart-json-item-title {
+  font-weight: 500; color: var(--vscode-foreground);
+}
+.omp-smart-json-item-meta {
+  font-size: 11px; color: var(--vscode-descriptionForeground);
+}
+.omp-smart-json-primitive {
+  font-size: 12px; padding: 1px 0; color: var(--vscode-foreground);
+}
+.omp-smart-json-more {
+  font-size: 11px; color: var(--omp-muted); font-style: italic; padding: 4px 0;
+}
+
+/* ── Web Search result ─────────────────────────────── */
+.omp-tool-result-websearch { padding: 6px 12px; }
+.omp-websearch-entry {
+  padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.omp-websearch-entry:last-child { border-bottom: none; }
+.omp-websearch-title {
+  display: flex; align-items: baseline; gap: 6px; font-size: 12px; font-weight: 500;
+  color: var(--vscode-foreground);
+}
+.omp-websearch-num {
+  font-size: 10px; color: var(--vscode-descriptionForeground);
+  background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
+  border-radius: 3px; padding: 1px 4px; min-width: 14px; text-align: center;
+}
+.omp-websearch-url {
+  display: block; font-size: 11px; color: var(--vscode-textLink-foreground);
+  text-decoration: none; margin-top: 2px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.omp-websearch-url:hover { text-decoration: underline; }
+.omp-websearch-snippet {
+  font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* ── Todo Write result ─────────────────────────────── */
+.omp-tool-result-todo { padding: 6px 12px; }
+.omp-todo-item {
+  display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 12px;
+}
+.omp-todo-icon { font-size: 14px; flex-shrink: 0; }
+.omp-todo-pending .omp-todo-icon { color: var(--vscode-descriptionForeground); }
+.omp-todo-in_progress .omp-todo-icon { color: var(--vscode-textLink-foreground); }
+.omp-todo-completed .omp-todo-icon { color: var(--omp-success, #4ec9b0); }
+.omp-todo-cancelled .omp-todo-icon { color: var(--omp-muted); }
+.omp-todo-text { flex: 1; }
+.omp-todo-completed .omp-todo-text { text-decoration: line-through; color: var(--vscode-descriptionForeground); }
+.omp-todo-cancelled .omp-todo-text { text-decoration: line-through; color: var(--omp-muted); }
+.omp-todo-priority {
+  font-size: 9px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;
+  padding: 1px 4px; border-radius: 3px;
+}
+.omp-todo-priority--high { background: rgba(255,80,80,0.15); color: #ff5050; }
+.omp-todo-priority--medium { background: rgba(255,180,50,0.15); color: #ffb432; }
+.omp-todo-priority--low { color: var(--vscode-descriptionForeground); }
+
+/* ── VS Code bridge result ─────────────────────────── */
+.omp-tool-result-vscode { padding: 6px 12px; }
 
 /* ── Task/Agent Block ──────────────────────────────── */
 .omp-task-block { margin: 6px 0; border: 1px solid var(--omp-border); border-radius: 6px; overflow: hidden; background: var(--omp-code-bg); }

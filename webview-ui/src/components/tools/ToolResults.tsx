@@ -196,29 +196,78 @@ interface SearchResultProps {
 }
 
 export function SearchResult({ result }: SearchResultProps) {
-  const [showMatches, setShowMatches] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const r = result as Record<string, unknown> | null;
   if (!r) return null;
 
-  const content = extractText(r);
   const details = r.details as Record<string, unknown> | undefined;
   const matchCount = details?.matchCount as number | undefined;
   const fileCount = details?.fileCount as number | undefined;
   const fileMatches = details?.fileMatches as Array<{ path: string; count: number }> | undefined;
   const truncated = details?.truncated as boolean | undefined;
+  const displayContent = details?.displayContent as string | undefined;
+  const rawContent = extractText(r);
+
+  // Parse displayContent into structured file groups with match lines
+  const groups = parseSearchDisplayContent(displayContent || rawContent || "", fileMatches);
 
   return (
     <div className="omp-tool-result-search">
-      {/* Summary line */}
-      <div className="omp-search-summary">
-        {matchCount != null && <span className="omp-search-stat">{matchCount} matches</span>}
-        {fileCount != null && <span className="omp-search-stat"> · {fileCount} files</span>}
-        {truncated && <span className="omp-search-truncated"> (truncated)</span>}
+      {/* Summary bar */}
+      <div className="omp-search-header">
+        <span className="omp-search-stat">
+          <strong>{matchCount ?? "?"}</strong> {matchCount === 1 ? "match" : "matches"}
+        </span>
+        <span className="omp-search-stat">
+          in <strong>{fileCount ?? fileMatches?.length ?? "?"}</strong> {fileCount === 1 ? "file" : "files"}
+        </span>
+        {truncated && <span className="omp-search-truncated">(truncated)</span>}
+        {groups.length > 0 && (
+          <button className="omp-search-toggle" onClick={() => setExpanded(!expanded)}>
+            <Icon name={expanded ? "chevron-down" : "chevron-right"} />
+          </button>
+        )}
       </div>
 
-      {/* File list with match counts */}
-      {fileMatches && fileMatches.length > 0 && (
-        <div className="omp-search-files">
+      {/* File match groups with inline snippets */}
+      {expanded && groups.length > 0 && (
+        <div className="omp-search-groups">
+          {groups.map((group, gi) => (
+            <div key={gi} className="omp-search-group">
+              <div className="omp-search-group-header">
+                <Icon name="file" className="omp-search-file-icon" />
+                <a
+                  href="#"
+                  className="omp-file-link"
+                  onClick={(e) => { e.preventDefault(); openFileInEditor(group.path); }}
+                >
+                  {group.path}
+                </a>
+                {group.count > 0 && (
+                  <span className="omp-search-group-count">{group.count}</span>
+                )}
+              </div>
+              {group.lines.length > 0 && (
+                <div className="omp-search-snippet">
+                  {group.lines.map((line, li) => (
+                    <div
+                      key={li}
+                      className={`omp-search-line ${line.isMatch ? "omp-search-line--match" : ""}`}
+                    >
+                      <span className="omp-search-line-num">{line.lineNum}</span>
+                      <span className="omp-search-line-content">{line.content}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Fallback: file list without snippets (when no displayContent) */}
+      {!expanded && fileMatches && fileMatches.length > 0 && (
+        <div className="omp-search-file-list">
           {fileMatches.map((fm) => (
             <div key={fm.path} className="omp-search-file-item">
               <a
@@ -228,25 +277,88 @@ export function SearchResult({ result }: SearchResultProps) {
               >
                 {fm.path}
               </a>
-              <span className="omp-search-file-count">({fm.count})</span>
+              <span className="omp-search-group-count">{fm.count}</span>
             </div>
           ))}
         </div>
       )}
-
-      {/* Toggle for raw match content */}
-      {content && (
-        <div className="omp-search-matches-toggle">
-          <button className="omp-tool-raw-btn" onClick={() => setShowMatches(!showMatches)}>
-            {showMatches ? "Hide matches" : "Show matches"}
-          </button>
-          {showMatches && (
-            <pre className="omp-search-matches-content">{cleanHashlineContent(content)}</pre>
-          )}
-        </div>
-      )}
     </div>
   );
+}
+
+interface SearchGroup {
+  path: string;
+  count: number;
+  lines: Array<{ lineNum: string; content: string; isMatch: boolean }>;
+}
+
+/** Parse OMP's displayContent format into structured groups */
+function parseSearchDisplayContent(text: string, fileMatches?: Array<{ path: string; count: number }>): SearchGroup[] {
+  const groups: SearchGroup[] = [];
+  let currentDir = "";
+  let currentPath = "";
+  let currentLines: SearchGroup["lines"] = [];
+
+  for (const raw of text.split("\n")) {
+    // Directory header: "# dir/"
+    if (raw.startsWith("# ")) {
+      currentDir = raw.slice(2).trim().replace(/\/$/, "");
+      continue;
+    }
+
+    // File header: "## filename"
+    if (raw.startsWith("## ")) {
+      if (currentPath && currentLines.length > 0) {
+        groups.push({ path: currentPath, count: currentLines.filter((l) => l.isMatch).length, lines: currentLines });
+      }
+      const fileName = raw.slice(3).trim();
+      currentPath = currentDir ? `${currentDir}/${fileName}` : fileName;
+      currentLines = [];
+      continue;
+    }
+
+    // Match line: "*linenum│content" or " linenum│content"
+    const lineMatch = raw.match(/^([* ])?\s*(\d+)│(.*)$/);
+    if (lineMatch) {
+      const isMatch = lineMatch[1] === "*";
+      currentLines.push({
+        lineNum: lineMatch[2]!,
+        content: lineMatch[3] ?? "",
+        isMatch,
+      });
+      continue;
+    }
+
+    // Hashline format fallback: "*linenum hash|content" or " linenum hash|content"
+    const hashMatch = raw.match(/^([* ])(\d+)[a-z]{2,4}\|(.*)$/);
+    if (hashMatch) {
+      const isMatch = hashMatch[1] === "*";
+      currentLines.push({
+        lineNum: hashMatch[2]!,
+        content: hashMatch[3] ?? "",
+        isMatch,
+      });
+    }
+  }
+
+  // Push last group
+  if (currentPath && currentLines.length > 0) {
+    groups.push({ path: currentPath, count: currentLines.filter((l) => l.isMatch).length, lines: currentLines });
+  }
+
+  // If no groups were parsed but we have fileMatches metadata, create groups from that
+  if (groups.length === 0 && fileMatches) {
+    for (const fm of fileMatches) {
+      groups.push({ path: fm.path, count: fm.count, lines: [] });
+    }
+  }
+
+  // If we still have ungrouped lines (no ## header, single file), wrap them
+  if (groups.length === 0 && currentLines.length > 0) {
+    groups.push({ path: "", count: currentLines.filter((l) => l.isMatch).length, lines: currentLines });
+  }
+
+  return groups;
 }
 
 // ============================================================================
@@ -372,6 +484,7 @@ interface FindResultProps {
 }
 
 export function FindResult({ result }: FindResultProps) {
+  const [expanded, setExpanded] = useState(true);
   const r = result as Record<string, unknown> | null;
   if (!r) return null;
 
@@ -381,34 +494,61 @@ export function FindResult({ result }: FindResultProps) {
   const files = details?.files as string[] | undefined;
 
   const displayFiles = files || (content ? content.split("\n").filter(Boolean) : []);
+  const count = fileCount ?? displayFiles.length;
 
   return (
     <div className="omp-tool-result-find">
-      {fileCount != null && (
-        <div className="omp-find-summary">{fileCount} files found</div>
-      )}
-      <div className="omp-find-list">
-        {displayFiles.slice(0, 30).map((f) => (
-          <div key={f} className="omp-find-item">
-            <a
-              href="#"
-              className="omp-file-link"
-              onClick={(e) => { e.preventDefault(); openFileInEditor(f); }}
-            >
-              {f}
-            </a>
-          </div>
-        ))}
-        {displayFiles.length > 30 && (
-          <div className="omp-find-more">...and {displayFiles.length - 30} more</div>
+      <div className="omp-find-header">
+        <span className="omp-find-stat">
+          <strong>{count}</strong> {count === 1 ? "file" : "files"} found
+        </span>
+        {displayFiles.length > 5 && (
+          <button className="omp-search-toggle" onClick={() => setExpanded(!expanded)}>
+            <Icon name={expanded ? "chevron-down" : "chevron-right"} />
+          </button>
         )}
       </div>
+      {expanded && (
+        <div className="omp-find-list">
+          {displayFiles.slice(0, 50).map((f) => (
+            <div key={f} className="omp-find-item">
+              <Icon name={getFileIcon(f)} className="omp-find-file-icon" />
+              <a
+                href="#"
+                className="omp-file-link"
+                onClick={(e) => { e.preventDefault(); openFileInEditor(f); }}
+              >
+                {f}
+              </a>
+            </div>
+          ))}
+          {displayFiles.length > 50 && (
+            <div className="omp-find-more">...and {displayFiles.length - 50} more</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
+/** Get a codicon name based on file extension */
+function getFileIcon(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (path.endsWith("/")) return "folder";
+  const iconMap: Record<string, string> = {
+    ts: "file-code", tsx: "file-code", js: "file-code", jsx: "file-code",
+    py: "file-code", rb: "file-code", rs: "file-code", go: "file-code",
+    c: "file-code", h: "file-code", cpp: "file-code", java: "file-code",
+    json: "json", yaml: "file-code", yml: "file-code", toml: "file-code",
+    md: "markdown", txt: "file-text", html: "file-code", css: "file-code",
+    svg: "file-media", png: "file-media", jpg: "file-media", gif: "file-media",
+    sh: "terminal", bash: "terminal",
+  };
+  return iconMap[ext] || "file";
+}
+
 // ============================================================================
-// Generic fallback renderer
+// Generic fallback renderer (smart JSON formatting)
 // ============================================================================
 
 interface GenericResultProps {
@@ -423,21 +563,315 @@ export function GenericResult({ result }: GenericResultProps) {
   const content = extractText(r);
   const details = r.details as Record<string, unknown> | undefined;
 
+  // If we only have text content and no structured details, render as text
+  if (content && !details) {
+    return (
+      <div className="omp-tool-result-generic">
+        <ClickableText text={content} className="omp-generic-text" />
+      </div>
+    );
+  }
+
+  // If we have structured details, render them smartly
   return (
     <div className="omp-tool-result-generic">
-      {content && <ClickableText text={content} className="omp-tool-result-text" />}
-      {details && (
-        <details className="omp-tool-details">
-          <summary>Details</summary>
-          <pre className="omp-tool-details-json">{JSON.stringify(details, null, 2)}</pre>
-        </details>
-      )}
+      {content && <ClickableText text={content} className="omp-generic-text" />}
+      {details && <SmartJson data={details} />}
       <button className="omp-tool-raw-btn" onClick={() => setShowRaw(!showRaw)}>
-        {showRaw ? "Hide raw" : "Show raw"}
+        {showRaw ? "Hide raw" : "Raw JSON"}
       </button>
       {showRaw && (
         <pre className="omp-tool-raw-json">{JSON.stringify(result, null, 2)}</pre>
       )}
+    </div>
+  );
+}
+
+/** Smart JSON renderer — renders objects/arrays in a readable format */
+function SmartJson({ data }: { data: unknown }) {
+  if (data === null || data === undefined) return null;
+
+  // Array of objects → render as compact list
+  if (Array.isArray(data)) {
+    if (data.length === 0) return null;
+    if (typeof data[0] === "object" && data[0] !== null) {
+      return (
+        <div className="omp-smart-json-list">
+          {data.slice(0, 20).map((item, i) => (
+            <SmartJsonItem key={i} data={item} />
+          ))}
+          {data.length > 20 && (
+            <div className="omp-smart-json-more">...and {data.length - 20} more items</div>
+          )}
+        </div>
+      );
+    }
+    // Array of primitives
+    return (
+      <div className="omp-smart-json-list">
+        {data.slice(0, 30).map((item, i) => (
+          <div key={i} className="omp-smart-json-primitive">{String(item)}</div>
+        ))}
+      </div>
+    );
+  }
+
+  // Object → render as key-value pairs
+  if (typeof data === "object") {
+    const entries = Object.entries(data as Record<string, unknown>);
+    if (entries.length === 0) return null;
+    return (
+      <div className="omp-smart-json-kv">
+        {entries.map(([key, value]) => (
+          <div key={key} className="omp-smart-json-row">
+            <span className="omp-smart-json-key">{key}</span>
+            <span className="omp-smart-json-value">{formatJsonValue(value)}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return <span className="omp-smart-json-primitive">{String(data)}</span>;
+}
+
+/** Render a single object from an array as a compact card */
+function SmartJsonItem({ data }: { data: unknown }) {
+  if (!data || typeof data !== "object") {
+    return <div className="omp-smart-json-primitive">{String(data)}</div>;
+  }
+  const entries = Object.entries(data as Record<string, unknown>);
+  // Find a "title" field (name, path, title, label, id, file)
+  const titleKey = entries.find(([k]) =>
+    ["name", "path", "title", "label", "file", "filePath"].includes(k),
+  );
+  const rest = entries.filter(([k]) => k !== titleKey?.[0]);
+
+  return (
+    <div className="omp-smart-json-item">
+      {titleKey && (
+        <span className="omp-smart-json-item-title">{formatJsonValue(titleKey[1])}</span>
+      )}
+      {rest.slice(0, 4).map(([key, value]) => (
+        <span key={key} className="omp-smart-json-item-meta">
+          {key}: {formatJsonValue(value)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function formatJsonValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") {
+    if (value.length > 80) return value.slice(0, 77) + "...";
+    return value;
+  }
+  if (Array.isArray(value)) return `[${value.length} items]`;
+  if (typeof value === "object") return `{${Object.keys(value as object).length} fields}`;
+  return String(value);
+}
+
+// ============================================================================
+// Web Search Result Renderer
+// ============================================================================
+
+interface WebSearchResultProps {
+  result: unknown;
+}
+
+export function WebSearchResult({ result }: WebSearchResultProps) {
+  const r = result as Record<string, unknown> | null;
+  if (!r) return null;
+
+  const content = extractText(r);
+  if (!content) return null;
+
+  // Parse "[N] Title\n    url" format
+  const entries = parseWebSearchResults(content);
+
+  if (entries.length === 0) {
+    return (
+      <div className="omp-tool-result-websearch">
+        <pre className="omp-generic-text">{content}</pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="omp-tool-result-websearch">
+      {entries.map((entry, i) => (
+        <div key={i} className="omp-websearch-entry">
+          <div className="omp-websearch-title">
+            <span className="omp-websearch-num">{entry.num}</span>
+            <span>{entry.title}</span>
+          </div>
+          {entry.url && (
+            <a className="omp-websearch-url" href={entry.url} target="_blank" rel="noreferrer">
+              {entry.url}
+            </a>
+          )}
+          {entry.snippet && (
+            <div className="omp-websearch-snippet">{entry.snippet}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function parseWebSearchResults(text: string): Array<{ num: string; title: string; url?: string; snippet?: string }> {
+  const entries: Array<{ num: string; title: string; url?: string; snippet?: string }> = [];
+  const lines = text.split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const titleMatch = lines[i]!.match(/^\[(\d+)\]\s*(.+)/);
+    if (titleMatch) {
+      const entry: { num: string; title: string; url?: string; snippet?: string } = {
+        num: titleMatch[1]!,
+        title: titleMatch[2]!,
+      };
+      i++;
+      // Next line(s) may be URL and/or snippet
+      while (i < lines.length && !lines[i]!.match(/^\[\d+\]/)) {
+        const trimmed = lines[i]!.trim();
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+          entry.url = trimmed;
+        } else if (trimmed) {
+          entry.snippet = (entry.snippet ? entry.snippet + " " : "") + trimmed;
+        }
+        i++;
+      }
+      entries.push(entry);
+    } else {
+      i++;
+    }
+  }
+
+  return entries;
+}
+
+// ============================================================================
+// Todo Write Result Renderer
+// ============================================================================
+
+interface TodoWriteResultProps {
+  result: unknown;
+}
+
+export function TodoWriteResult({ result }: TodoWriteResultProps) {
+  const r = result as Record<string, unknown> | null;
+  if (!r) return null;
+
+  const content = extractText(r);
+  const details = r.details as Record<string, unknown> | undefined;
+
+  // Try to parse todos from details or content
+  const todos = parseTodoItems(details, content);
+
+  if (todos.length === 0 && content) {
+    return (
+      <div className="omp-tool-result-todo">
+        <pre className="omp-generic-text">{content}</pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="omp-tool-result-todo">
+      {todos.map((item, i) => (
+        <div key={i} className={`omp-todo-item omp-todo-${item.status}`}>
+          <Icon name={getTodoIcon(item.status)} className="omp-todo-icon" />
+          <span className="omp-todo-text">{item.content}</span>
+          {item.priority && (
+            <span className={`omp-todo-priority omp-todo-priority--${item.priority}`}>{item.priority}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function getTodoIcon(status: string): string {
+  switch (status) {
+    case "completed": return "pass-filled";
+    case "in_progress": return "sync~spin";
+    case "cancelled": return "circle-slash";
+    default: return "circle-large-outline";
+  }
+}
+
+function parseTodoItems(details: Record<string, unknown> | undefined, content: string | null): Array<{ content: string; status: string; priority?: string }> {
+  // Try details.todos array
+  if (details?.todos && Array.isArray(details.todos)) {
+    return (details.todos as Array<Record<string, unknown>>).map((t) => ({
+      content: (t.content as string) || "",
+      status: (t.status as string) || "pending",
+      priority: t.priority as string | undefined,
+    }));
+  }
+
+  // Try to parse from text content (e.g., "- [x] item" or "pending: item")
+  if (!content) return [];
+  const items: Array<{ content: string; status: string; priority?: string }> = [];
+  for (const line of content.split("\n")) {
+    const checkMatch = line.match(/^[-*]\s*\[([ xX~])\]\s*(.+)/);
+    if (checkMatch) {
+      const mark = checkMatch[1]!;
+      const status = mark === "x" || mark === "X" ? "completed" : mark === "~" ? "cancelled" : "pending";
+      items.push({ content: checkMatch[2]!, status });
+      continue;
+    }
+    const statusMatch = line.match(/^(pending|in_progress|completed|cancelled):\s*(.+)/i);
+    if (statusMatch) {
+      items.push({ content: statusMatch[2]!, status: statusMatch[1]!.toLowerCase() });
+    }
+  }
+  return items;
+}
+
+// ============================================================================
+// VS Code Bridge Tool Result Renderer
+// ============================================================================
+
+interface VscodeResultProps {
+  result: unknown;
+}
+
+export function VscodeResult({ result }: VscodeResultProps) {
+  const r = result as Record<string, unknown> | null;
+  if (!r) return null;
+
+  const content = extractText(r);
+  if (!content) return null;
+
+  // Parse the JSON content from the bridge (it's JSON-stringified in the text)
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    // Not JSON — render as text
+    return (
+      <div className="omp-tool-result-vscode">
+        <ClickableText text={content} className="omp-generic-text" />
+      </div>
+    );
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    return (
+      <div className="omp-tool-result-vscode">
+        <pre className="omp-generic-text">{content}</pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="omp-tool-result-vscode">
+      <SmartJson data={parsed} />
     </div>
   );
 }

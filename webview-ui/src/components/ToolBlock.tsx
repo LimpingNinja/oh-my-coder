@@ -9,6 +9,9 @@ import {
   EditResult,
   BashResult,
   FindResult,
+  WebSearchResult,
+  TodoWriteResult,
+  VscodeResult,
   GenericResult,
 } from "./tools/ToolResults";
 
@@ -64,12 +67,15 @@ function basename(path: string): string {
 }
 
 /** Determine which tool category for result rendering */
-function getToolCategory(toolName: string): "read" | "search" | "edit" | "bash" | "find" | "generic" {
+function getToolCategory(toolName: string): "read" | "search" | "edit" | "bash" | "find" | "web_search" | "todo_write" | "vscode" | "generic" {
   if (["read", "read_file", "jetbrains_read_file", "jetbrains_get_file_text_by_path"].includes(toolName)) return "read";
-  if (["search", "search_files", "jetbrains_search_in_files_by_text", "jetbrains_search_in_files_by_regex", "jetbrains_search_text", "jetbrains_search_regex"].includes(toolName)) return "search";
+  if (["search", "search_files", "ast_grep", "ast_edit", "jetbrains_search_in_files_by_text", "jetbrains_search_in_files_by_regex", "jetbrains_search_text", "jetbrains_search_regex"].includes(toolName)) return "search";
   if (["edit", "edit_file", "apply_diff", "replace_in_file", "write_to_file", "write", "create_file", "jetbrains_replace_text_in_file"].includes(toolName)) return "edit";
   if (["bash", "execute_command", "shell", "jetbrains_execute_terminal_command"].includes(toolName)) return "bash";
   if (["find", "list_files", "glob", "jetbrains_find_files_by_glob", "jetbrains_find_files_by_name_keyword"].includes(toolName)) return "find";
+  if (toolName === "web_search") return "web_search";
+  if (toolName === "todo_write") return "todo_write";
+  if (toolName.startsWith("vscode_")) return "vscode";
   return "generic";
 }
 
@@ -169,7 +175,7 @@ export function ToolBlock({ toolCall }: ToolBlockProps) {
 }
 
 function renderResult(
-  category: "read" | "search" | "edit" | "bash" | "find" | "generic",
+  category: "read" | "search" | "edit" | "bash" | "find" | "web_search" | "todo_write" | "vscode" | "generic",
   result: unknown,
   filename: string | null,
   command: string | null,
@@ -185,6 +191,12 @@ function renderResult(
       return <BashResult result={result} command={command || undefined} />;
     case "find":
       return <FindResult result={result} />;
+    case "web_search":
+      return <WebSearchResult result={result} />;
+    case "todo_write":
+      return <TodoWriteResult result={result} />;
+    case "vscode":
+      return <VscodeResult result={result} />;
     default:
       return <GenericResult result={result} />;
   }
