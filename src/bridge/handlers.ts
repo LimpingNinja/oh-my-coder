@@ -95,6 +95,8 @@ export async function handleRpc(
       return showNotification(params);
     case "reportTerminalSession":
       return reportTerminalSession(params, state);
+    case "getTurnMetadata":
+      return state.getTurnMetadata();
     default:
       throw new Error(`Unknown bridge method: ${method}`);
   }

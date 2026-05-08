@@ -23,6 +23,7 @@ import {
   OmpSpawnError,
 } from "./rpc/errors.ts";
 import { TranscriptManager } from "./transcript/manager.ts";
+import { readHydrationFromJsonl } from "./transcript/turnMetadataReader.ts";
 
 let extensionUri: vscode.Uri;
 let outputChannel: vscode.OutputChannel;
@@ -59,6 +60,13 @@ let sessionTokensInput = 0;
 let sessionTokensOutput = 0;
 let sessionTokensCacheRead = 0;
 
+// Per-turn accumulators — reset at agent_start, emitted at agent_end.
+let turnCostAccumulator = 0;
+let turnTokensInput = 0;
+let turnTokensOutput = 0;
+let turnTokensCacheRead = 0;
+let turnStartTimestamp = 0;
+
 // Queue delivery modes from runtime state.
 let currentSteeringMode: string = "one-at-a-time";
 let currentFollowUpMode: string = "one-at-a-time";
@@ -82,7 +90,16 @@ async function startBridge(
   context: vscode.ExtensionContext,
 ): Promise<{ url: string; token: string } | undefined> {
   try {
-    const bridge = await createBridge(context);
+    const bridge = await createBridge(context, undefined, () => ({
+      model: currentHeaderState.details?.model,
+      thinkingLevel: currentHeaderState.details?.thinkingLevel,
+      contextPercent: currentHeaderState.contextPercent,
+      tokens: (turnTokensInput > 0 || turnTokensOutput > 0 || turnTokensCacheRead > 0)
+        ? { input: turnTokensInput, output: turnTokensOutput, cacheRead: turnTokensCacheRead }
+        : undefined,
+      costUsd: turnCostAccumulator > 0 ? turnCostAccumulator : undefined,
+      durationMs: turnStartTimestamp > 0 ? Date.now() - turnStartTimestamp : undefined,
+    }));
     bridgeContext = bridge;
     outputChannel.appendLine(`[omp] bridge started at ${bridge.url}`);
     return { url: bridge.url, token: bridge.token };
@@ -578,8 +595,27 @@ async function launchSession(
       (runtimeState.kind === "ready" || runtimeState.kind === "streaming")
     ) {
       try {
-        const messages = await rpcController.getMessages();
-        transcriptManager.hydrateFromMessages(messages);
+        const jsonlHydration = currentActiveSessionPath
+          ? readHydrationFromJsonl(currentActiveSessionPath)
+          : null;
+
+        let messages: Record<string, unknown>[];
+        if (jsonlHydration) {
+          messages = jsonlHydration.messages as Record<string, unknown>[];
+          transcriptManager.hydrateFromMessages(
+            messages,
+            jsonlHydration.turnMetadataEntries.length > 0 ? jsonlHydration.turnMetadataEntries : undefined,
+            "jsonl",
+          );
+          outputChannel.appendLine(
+            `[omp] hydrated from JSONL: ${messages.length} messages, ${jsonlHydration.turnMetadataEntries.length} turn metadata entries`,
+          );
+        } else {
+          messages = (await rpcController.getMessages()) as Record<string, unknown>[];
+          transcriptManager.hydrateFromMessages(messages, undefined, "omp");
+          transcriptManager.addSystemMessage("Could not access Session Path, restored from OMP");
+          outputChannel.appendLine("[omp] session path unreadable — restored from OMP get_messages");
+        }
 
         // Seed cost/token accumulators from historical messages
         for (const raw of messages) {
@@ -799,14 +835,42 @@ function handleRuntimeFrame(frame: unknown): void {
 
   switch (frameType) {
     case "agent_start":
-      // Agent started — update runtime state to streaming
+      // Agent started — reset per-turn accumulators and update runtime state
+      turnCostAccumulator = 0;
+      turnTokensInput = 0;
+      turnTokensOutput = 0;
+      turnTokensCacheRead = 0;
+      turnStartTimestamp = Date.now();
       updateRuntimeStateFromController();
       break;
     case "agent_end": {
-      // Agent ended — query full state and refresh header stats
+      // Agent ended — emit per-turn metadata, then query full state and refresh header stats
+      const turnDurationMs = Date.now() - turnStartTimestamp;
       void rpcController
         .getState()
         .then((state) => {
+          // Emit per-turn metadata to the webview
+          const modelId = state.model?.id;
+          let thinkingLvl: string | undefined;
+          if (typeof state.thinkingLevel === "string") {
+            thinkingLvl = state.thinkingLevel;
+          } else if (state.thinkingLevel && typeof state.thinkingLevel === "object") {
+            thinkingLvl = (state.thinkingLevel as { level?: string }).level;
+          }
+          postToWebview({
+            type: "runtime.turnMetadata",
+            metadata: {
+              model: state.model && modelId ? { provider: state.model.provider, modelId } : undefined,
+              thinkingLevel: thinkingLvl,
+              contextPercent: state.contextUsage?.percent != null ? Math.round(state.contextUsage.percent) : undefined,
+              tokens: (turnTokensInput > 0 || turnTokensOutput > 0 || turnTokensCacheRead > 0)
+                ? { input: turnTokensInput, output: turnTokensOutput, cacheRead: turnTokensCacheRead }
+                : undefined,
+              costUsd: turnCostAccumulator > 0 ? turnCostAccumulator : undefined,
+              durationMs: turnDurationMs > 0 ? turnDurationMs : undefined,
+            },
+          });
+
           currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
           postToWebview({ type: "runtime.state", state: currentRuntimeState });
           pushHeaderState();
@@ -815,6 +879,17 @@ function handleRuntimeFrame(frame: unknown): void {
         })
         .catch(() => {
           // Best effort — state update on agent_end is non-critical
+          // Still emit turn metadata with what we have (no model/context info)
+          postToWebview({
+            type: "runtime.turnMetadata",
+            metadata: {
+              tokens: (turnTokensInput > 0 || turnTokensOutput > 0 || turnTokensCacheRead > 0)
+                ? { input: turnTokensInput, output: turnTokensOutput, cacheRead: turnTokensCacheRead }
+                : undefined,
+              costUsd: turnCostAccumulator > 0 ? turnCostAccumulator : undefined,
+              durationMs: turnDurationMs > 0 ? turnDurationMs : undefined,
+            },
+          });
         });
       // Refresh cost/token stats after each agent turn
       void refreshHeaderStats();
@@ -834,17 +909,24 @@ function handleRuntimeFrame(frame: unknown): void {
       if (endMessage) {
         const usage = endMessage.usage as Record<string, unknown> | undefined;
         if (usage) {
-          // Accumulate tokens
+          // Accumulate tokens (session-level)
           if (typeof usage.input === "number") sessionTokensInput += usage.input;
           if (typeof usage.output === "number") sessionTokensOutput += usage.output;
           if (typeof usage.cacheRead === "number") sessionTokensCacheRead += usage.cacheRead;
+
+          // Accumulate tokens (turn-level)
+          if (typeof usage.input === "number") turnTokensInput += usage.input;
+          if (typeof usage.output === "number") turnTokensOutput += usage.output;
+          if (typeof usage.cacheRead === "number") turnTokensCacheRead += usage.cacheRead;
 
           // Accumulate cost
           const cost = usage.cost as Record<string, unknown> | undefined;
           if (cost && typeof cost.total === "number") {
             sessionCostAccumulator += cost.total;
+            turnCostAccumulator += cost.total;
           } else if (typeof usage.totalCost === "number") {
             sessionCostAccumulator += usage.totalCost as number;
+            turnCostAccumulator += usage.totalCost as number;
           }
 
           // Push updated header with accumulated values
@@ -1247,12 +1329,32 @@ function pushHeaderState(): void {
  * OMP runtime state response. Called after every successful get_state.
  */
 function updateHeaderFromOmpState(state: OmpStatePayload): void {
+  const ctx = state.contextUsage;
+  const modelId = state.model?.id;
+  let thinkingLevelStr: string | undefined;
+  if (typeof state.thinkingLevel === "string") {
+    thinkingLevelStr = state.thinkingLevel;
+  } else if (state.thinkingLevel && typeof state.thinkingLevel === "object") {
+    thinkingLevelStr = (state.thinkingLevel as { level?: string }).level;
+  }
   currentHeaderState = {
     ...currentHeaderState,
-    contextPercent: state.contextUsage?.percent != null
-      ? Math.round(state.contextUsage.percent)
-      : currentHeaderState.contextPercent,
+    contextPercent: ctx?.percent != null ? Math.round(ctx.percent) : currentHeaderState.contextPercent,
     sessionName: state.sessionName ?? currentHeaderState.sessionName,
+    tokens: ctx?.tokens != null
+      ? { input: ctx.tokens, output: 0, cacheRead: 0 }
+      : currentHeaderState.tokens,
+    details: {
+      model: state.model && modelId ? { provider: state.model.provider, modelId } : undefined,
+      thinkingLevel: thinkingLevelStr,
+      steeringMode: state.steeringMode,
+      followUpMode: state.followUpMode,
+      interruptMode: state.interruptMode,
+      messageCount: state.messageCount,
+      queuedMessageCount: state.queuedMessageCount,
+      toolCount: state.dumpTools?.length,
+      hasSystemPrompt: !!state.systemPrompt,
+    },
   };
 
   postToWebview({ type: "header.state", state: currentHeaderState });

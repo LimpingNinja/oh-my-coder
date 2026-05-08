@@ -16,6 +16,36 @@
  */
 
 // ============================================================================
+// Per-turn metadata (frozen at agent_end)
+// ============================================================================
+
+/**
+ * Metadata captured at the end of an agent turn.
+ *
+ * This is a frozen snapshot of the state at turn completion — it never
+ * updates after being attached. Used by the Response Details panel to
+ * show per-response stats rather than live session-level data.
+ *
+ * Populated via two paths:
+ * 1. Live: extension host emits `runtime.turnMetadata` at agent_end
+ * 2. Hydration: parsed from `custom`/`turn_metadata` JSONL entries
+ */
+export interface TurnMetadata {
+  /** Model used for this turn */
+  model?: { provider: string; modelId: string };
+  /** Thinking/reasoning level active during this turn */
+  thinkingLevel?: string;
+  /** Context window usage percentage at turn completion */
+  contextPercent?: number;
+  /** Tokens consumed by this turn (not cumulative) */
+  tokens?: { input: number; output: number; cacheRead: number };
+  /** Cost in USD for this turn (not cumulative) */
+  costUsd?: number;
+  /** Wall-clock duration of this turn in milliseconds */
+  durationMs?: number;
+}
+
+// ============================================================================
 // Turn model
 // ============================================================================
 
@@ -29,7 +59,7 @@ export type TurnId = string;
  */
 export type Turn =
   | { kind: "user"; id: TurnId; timestamp: number; text: string; queuedAs?: "steer" | "followUp" }
-  | { kind: "agent"; id: TurnId; timestamp: number; events: TurnEvent[]; active: boolean }
+  | { kind: "agent"; id: TurnId; timestamp: number; events: TurnEvent[]; active: boolean; metadata?: TurnMetadata }
   | { kind: "ui-request"; id: TurnId; timestamp: number; request: UiRequestData; response?: UiResponseData };
 
 /**

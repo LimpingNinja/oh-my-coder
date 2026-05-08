@@ -38,6 +38,24 @@ export interface ChatHeaderState {
     output: number;
     cacheRead: number;
   };
+  /** Enriched metadata shown in the expandable details panel */
+  details?: {
+    /** Active model identifier */
+    model?: { provider: string; modelId: string };
+    /** Thinking/reasoning level */
+    thinkingLevel?: string;
+    /** Runtime modes */
+    steeringMode?: string;
+    followUpMode?: string;
+    interruptMode?: string;
+    /** Session counters */
+    messageCount?: number;
+    queuedMessageCount?: number;
+    /** Tool count from dumpTools */
+    toolCount?: number;
+    /** System prompt presence/truncated */
+    hasSystemPrompt?: boolean;
+  };
 }
 
 // ============================================================================
@@ -112,6 +130,7 @@ export const EMPTY_HEADER_STATE: ChatHeaderState = {
   contextPercent: undefined,
   canCompact: false,
   tokens: undefined,
+  details: undefined,
 };
 
 /**

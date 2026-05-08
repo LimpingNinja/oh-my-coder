@@ -15,6 +15,7 @@ webview-ui/main.js
 *.vsix
 
 # Project-local config (personal/machine-specific)
+.kilo/
 .omp/
 .vscode/
 AGENTS.md

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { BridgeState } from "./types.ts";
+import type { BridgeState, TurnMetadataSnapshot } from "./types.ts";
 
 const MAX_NOTIFICATIONS = 100;
 const MAX_CODE_ACTIONS = 100;
@@ -7,6 +7,7 @@ const MAX_CODE_ACTIONS = 100;
 export function createBridgeState(
   initialSelection: BridgeState["latestSelection"],
   onTerminalSession?: (terminalId: string, sessionFile: string) => void,
+  onGetTurnMetadata?: () => TurnMetadataSnapshot,
 ): BridgeState {
   return {
     latestSelection: initialSelection,
@@ -30,6 +31,9 @@ export function createBridgeState(
     },
     reportTerminalSession(terminalId, sessionFile) {
       onTerminalSession?.(terminalId, sessionFile);
+    },
+    getTurnMetadata() {
+      return onGetTurnMetadata?.() ?? {};
     },
   };
 }

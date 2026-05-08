@@ -58,6 +58,7 @@ body {
 }
 .omp-hero { text-align: center; margin-bottom: 24px; }
 .omp-logo { margin-bottom: 16px; }
+.omp-hero-lockup { max-width: 240px; height: auto; }
 .omp-welcome { font-size: 13px; color: var(--omp-muted); max-width: 320px; line-height: 1.5; margin: 0 auto; }
 
 .omp-section { width: 100%; max-width: 360px; }
@@ -175,8 +176,8 @@ body {
 .omp-header-logo-wrap {
   position: relative;
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
 }
 .omp-header-logo-wrap .omp-header-dot {
   position: absolute;
@@ -184,7 +185,7 @@ body {
   right: -2px;
   border: 2px solid var(--omp-bg);
 }
-.omp-header-logo { display: block; }
+.omp-header-logo { display: block; border-radius: 4px; }
 .omp-header-right {
   display: flex;
   align-items: center;

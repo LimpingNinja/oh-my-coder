@@ -227,6 +227,18 @@ export default function (pi) {
 
   pi.on("agent_end", async (_event, ctx) => {
     void refreshStatus(ctx);
+    // Persist per-turn metadata into the session JSONL for hydration.
+    try {
+      const metadata = await callBridge("getTurnMetadata");
+      if (metadata && typeof metadata === "object") {
+        const hasData = metadata.model || metadata.tokens || metadata.costUsd || metadata.durationMs;
+        if (hasData) {
+          pi.appendEntry("turn_metadata", metadata);
+        }
+      }
+    } catch {
+      // Best effort — metadata persistence is non-critical
+    }
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {

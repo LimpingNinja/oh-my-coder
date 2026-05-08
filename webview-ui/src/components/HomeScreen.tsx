@@ -1,5 +1,6 @@
 import { useAppState, setScreen } from "../state/store";
 import { getVSCodeAPI } from "../vscode";
+import { getAssetUri } from "../utils/assets";
 import { Composer } from "./Composer";
 
 const MAX_RECENT = 3;
@@ -25,20 +26,11 @@ export function HomeScreen() {
         {/* Hero */}
         <div className="omp-hero">
           <div className="omp-logo">
-            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-              <rect width="48" height="48" rx="8" fill="var(--omp-accent)" />
-              <text
-                x="24"
-                y="32"
-                textAnchor="middle"
-                fontSize="20"
-                fontWeight="bold"
-                fill="var(--omp-bg)"
-                fontFamily="monospace"
-              >
-                OMP
-              </text>
-            </svg>
+            <img
+              src={getAssetUri("logoFull")}
+              alt="Oh My Coder"
+              className="omp-hero-lockup"
+            />
           </div>
           <p className="omp-welcome">
             Oh My Coder is an OMP-powered AI assistant. Start a session to build features, fix bugs,

@@ -35,6 +35,21 @@ export interface ChatAttachment {
   mediaType: string;
 }
 
+/**
+ * Per-turn metadata payload sent from extension host to webview at agent_end.
+ * Mirrors the webview's TurnMetadata shape for zero-transformation attachment.
+ */
+export interface TurnMetadataPayload {
+  /** ID of the assistant message this metadata belongs to (for hydration correlation) */
+  parentMessageId?: string;
+  model?: { provider: string; modelId: string };
+  thinkingLevel?: string;
+  contextPercent?: number;
+  tokens?: { input: number; output: number; cacheRead: number };
+  costUsd?: number;
+  durationMs?: number;
+}
+
 // ============================================================================
 // Webview → Extension messages
 // ============================================================================
@@ -176,11 +191,13 @@ export type ExtensionToWebviewMessage =
   | { type: "runtime.availableModels"; models: Array<{ provider: string; id: string; [key: string]: unknown }> }
   /** Forward a raw OMP RPC frame to the webview for transcript rendering. */
   | { type: "runtime.frame"; sessionPath?: string; frame: OmpRpcFrameForWebview }
+  /** Per-turn metadata snapshot, emitted at agent_end. Attached to the most recent agent turn. */
+  | { type: "runtime.turnMetadata"; metadata: TurnMetadataPayload }
 
   // ── Chat ─────────────────────────────────────────────────────────────
   | { type: "chat.message"; sessionPath: string; message: ChatMessageForWebview }
   | { type: "chat.delta"; sessionPath: string; messageId: string; delta: ChatDelta }
-  | { type: "chat.messagesLoaded"; sessionPath: string; messages: ChatMessageForWebview[] }
+  | { type: "chat.messagesLoaded"; sessionPath: string; messages: ChatMessageForWebview[]; turnMetadataEntries?: TurnMetadataPayload[] }
   | { type: "chat.queued"; behavior: "steer" | "followUp"; content: string }
 
   // ── Header/footer/status ─────────────────────────────────────────────

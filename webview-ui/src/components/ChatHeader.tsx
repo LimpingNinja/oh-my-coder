@@ -1,31 +1,21 @@
 import { useState, useCallback } from "react";
 import { useAppState } from "../state/store";
 import { getVSCodeAPI } from "../vscode";
+import { getAssetUri } from "../utils/assets";
 import { SessionPanel } from "./SessionPanel";
 import { TaskWaveform } from "./TaskWaveform";
 
-/** Inline OMP logo — 20px variant, inherits currentColor for theming. */
+/** OMP logo — renders the square icon asset at the given size. */
 function OmpLogo({ size = 20 }: { size?: number }) {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 128 128"
+    <img
+      src={getAssetUri("logoIcon")}
       width={size}
       height={size}
       className="omp-header-logo"
       aria-hidden="true"
-    >
-      <rect x="8" y="8" width="112" height="112" rx="20" fill="#0E639C" />
-      <path
-        d="M32 64c0-17.673 14.327-32 32-32s32 14.327 32 32-14.327 32-32 32S32 81.673 32 64Zm32-16c-8.837 0-16 7.163-16 16s7.163 16 16 16 16-7.163 16-16-7.163-16-16-16Z"
-        fill="#FFFFFF"
-      />
-      <path
-        d="M64 18c25.405 0 46 20.595 46 46s-20.595 46-46 46-46-20.595-46-46 20.595-46 46-46Zm0 8c-20.987 0-38 17.013-38 38s17.013 38 38 38 38-17.013 38-38-17.013-38-38-38Z"
-        fill="#9CDCFE"
-        opacity="0.9"
-      />
-    </svg>
+      alt=""
+    />
   );
 }
 
@@ -110,7 +100,7 @@ export function ChatHeader() {
         <div className="omp-header-row">
         <div className="omp-header-left">
           <div className="omp-header-logo-wrap">
-            <OmpLogo size={22} />
+            <OmpLogo size={28} />
             <span className={`omp-header-dot ${connectionClass}`} aria-label={header.connection} />
           </div>
           {editing ? (
@@ -177,40 +167,40 @@ export function ChatHeader() {
           </div>
         </div>
 
-        {/* Row 2: expandable token details with waveform + context progress bar */}
-        {detailsOpen && (
-          <div className="omp-header-details">
-            <TaskWaveform onScrollToTurn={handleScrollToTurn} />
-            {header.tokens ? (
-              <>
-                <div className="omp-context-progress">
-                  <span className="omp-context-count">{formatTokenCount(header.tokens.input + header.tokens.output)}</span>
-                  <div
-                    className="omp-context-bar"
-                    title={`Used: ${formatTokenCount(header.tokens.input + header.tokens.output)} | Cache: ${formatTokenCount(header.tokens.cacheRead)} | Context: ${header.contextPercent ?? "?"}%`}
-                  >
-                    <div
-                      className={`omp-context-used ${(header.contextPercent ?? 0) >= 50 ? "omp-context-used--hot" : ""}`}
-                      style={{ width: `${Math.min(header.contextPercent ?? 0, 100)}%` }}
-                    />
-                  </div>
-                  <span className="omp-context-count omp-context-count--muted">{header.contextPercent ?? 0}%</span>
-                </div>
-                <div className="omp-header-tokens">
-                  <span className="omp-token-up" title="Input tokens">↑ {formatTokenCount(header.tokens.input)}</span>
-                  <span className="omp-token-down" title="Output tokens">↓ {formatTokenCount(header.tokens.output)}</span>
-                  <span className="omp-token-cache" title="Cache read tokens">⟳ {formatTokenCount(header.tokens.cacheRead)}</span>
-                </div>
-              </>
-            ) : (
-              <span className="omp-header-tokens omp-header-tokens--unavailable">
-                Token data unavailable
-              </span>
-            )}
-          </div>
-        )}
+         {/* Row 2: expandable token details with waveform + context progress bar */}
+         {detailsOpen && (
+           <div className="omp-header-details">
+             <TaskWaveform onScrollToTurn={handleScrollToTurn} />
+             {header.tokens ? (
+               <>
+                 <div className="omp-context-progress">
+                   <span className="omp-context-count">{formatTokenCount(header.tokens.input + header.tokens.output)}</span>
+                   <div
+                     className="omp-context-bar"
+                     title={`Used: ${formatTokenCount(header.tokens.input + header.tokens.output)} | Cache: ${formatTokenCount(header.tokens.cacheRead)} | Context: ${header.contextPercent ?? "?"}%`}
+                   >
+                     <div
+                       className={`omp-context-used ${(header.contextPercent ?? 0) >= 50 ? "omp-context-used--hot" : ""}`}
+                       style={{ width: `${Math.min(header.contextPercent ?? 0, 100)}%` }}
+                     />
+                   </div>
+                   <span className="omp-context-count omp-context-count--muted">{header.contextPercent ?? 0}%</span>
+                 </div>
+                 <div className="omp-header-tokens">
+                   <span className="omp-token-up" title="Input tokens">↑ {formatTokenCount(header.tokens.input)}</span>
+                   <span className="omp-token-down" title="Output tokens">↓ {formatTokenCount(header.tokens.output)}</span>
+                   <span className="omp-token-cache" title="Cache read tokens">⟳ {formatTokenCount(header.tokens.cacheRead)}</span>
+                 </div>
+               </>
+             ) : (
+               <span className="omp-header-tokens omp-header-tokens--unavailable">
+                 Token data unavailable
+               </span>
+             )}
+            </div>
+          )}
 
-        {/* Row 3: conditional todo summary */}
+         {/* Row 3: conditional todo summary */}
         {allTasks.length > 0 && (
           <div className="omp-header-todos">
             <button

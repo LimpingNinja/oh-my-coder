@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 import { handleRpc } from "./handlers.ts";
 import { captureSelection, getEditorInfo } from "./serialize.ts";
 import { createBridgeState } from "./state.ts";
-import type { BridgeContext, RpcRequest } from "./types.ts";
+import type { BridgeContext, RpcRequest, TurnMetadataSnapshot } from "./types.ts";
 import { toErrorMessage } from "./utils.ts";
 
 const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
@@ -23,10 +23,12 @@ const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 export async function createBridge(
   context: vscode.ExtensionContext,
   onTerminalSession?: (terminalId: string, sessionFile: string) => void,
+  onGetTurnMetadata?: () => TurnMetadataSnapshot,
 ): Promise<BridgeContext> {
   const state = createBridgeState(
     captureSelection(vscode.window.activeTextEditor),
     onTerminalSession,
+    onGetTurnMetadata,
   );
   const dirtyState = new Map<string, boolean>();
   const token = randomUUID();

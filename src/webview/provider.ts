@@ -94,6 +94,14 @@ export class OmpChatProvider implements vscode.WebviewViewProvider {
       vscode.Uri.joinPath(this._extensionUri, "dist-webview", "assets", "style.css"),
     );
 
+    // Resolve image asset URIs for the webview
+    const logoFullUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, "assets", "omc_full_lockup_transparent_16c.png"),
+    );
+    const logoIconUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, "assets", "omc_large_icon_square_transparent_16c.png"),
+    );
+
     const nonce = getNonce();
 
     return /*html*/ `<!DOCTYPE html>
@@ -106,7 +114,7 @@ export class OmpChatProvider implements vscode.WebviewViewProvider {
   <link rel="stylesheet" href="${styleUri}">
 </head>
 <body>
-  <div id="omp-app"></div>
+  <div id="omp-app" data-asset-logo-full="${logoFullUri}" data-asset-logo-icon="${logoIconUri}"></div>
   <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

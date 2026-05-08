@@ -90,6 +90,23 @@ export interface HeaderState {
   contextPercent?: number;
   canCompact: boolean;
   tokens?: { input: number; output: number; cacheRead: number };
+  details?: {
+    /** Active model identifier */
+    model?: { provider: string; modelId: string };
+    /** Thinking/reasoning level */
+    thinkingLevel?: string;
+    /** Runtime modes */
+    steeringMode?: string;
+    followUpMode?: string;
+    interruptMode?: string;
+    /** Session counters */
+    messageCount?: number;
+    queuedMessageCount?: number;
+    /** Tool count from dumpTools */
+    toolCount?: number;
+    /** System prompt presence/truncated */
+    hasSystemPrompt?: boolean;
+  };
 }
 
 export interface FooterEditorContext {
@@ -150,15 +167,16 @@ const initialState: AppState = {
   transcript: [],
   turnTranscript: createEmptyTurnTranscript(),
   historySearch: "",
-  header: {
-    connection: "disconnected",
-    sessionName: "New Session",
-    sessionPath: "",
-    costUsd: undefined,
-    contextPercent: undefined,
-    canCompact: false,
-    tokens: undefined,
-  },
+   header: {
+     connection: "disconnected",
+     sessionName: "New Session",
+     sessionPath: "",
+     costUsd: undefined,
+     contextPercent: undefined,
+     canCompact: false,
+     tokens: undefined,
+     details: undefined,
+   },
   footerEditor: {
     filePath: undefined,
     languageId: undefined,

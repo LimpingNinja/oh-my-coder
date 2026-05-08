@@ -9,11 +9,13 @@ import type {
   Turn,
   TurnEvent,
   TurnTranscriptState,
+  TurnMetadata,
   TextEvent,
   ThinkingEvent,
   ToolCallEvent,
 } from "./turns";
 import { createEmptyTurnTranscript, generateTurnId } from "./turns";
+import { seedComposerHistory } from "../components/Composer";
 
 /**
  * Process a raw extension→webview message and update the transcript state.
@@ -26,7 +28,7 @@ export function processTurnMessage(
   switch (msg.type) {
     // ── Session lifecycle ──────────────────────────────────────────
     case "chat.messagesLoaded":
-      return hydrateFromMessages(state, msg.messages as unknown[]);
+      return hydrateFromMessages(state, msg.messages as unknown[], msg.turnMetadataEntries as TurnMetadata[] | undefined);
 
     case "chat.message":
       return handleChatMessage(state, msg.message as Record<string, unknown>);
@@ -40,6 +42,9 @@ export function processTurnMessage(
 
     case "runtime.frame":
       return handleRuntimeFrame(state, msg.frame as Record<string, unknown>);
+
+    case "runtime.turnMetadata":
+      return attachTurnMetadata(state, msg.metadata as TurnMetadata);
 
     case "error": {
       const scope = msg.scope as string;
@@ -57,10 +62,22 @@ export function processTurnMessage(
 
 // ── Hydration ─────────────────────────────────────────────────────────
 
-function hydrateFromMessages(state: TurnTranscriptState, messages: unknown[]): TurnTranscriptState {
+function hydrateFromMessages(state: TurnTranscriptState, messages: unknown[], turnMetadataEntries?: TurnMetadata[]): TurnTranscriptState {
   if (!Array.isArray(messages)) return state;
 
   const turns: Turn[] = [];
+
+  // Build a metadata lookup by assistant message id for correlation.
+  // JSONL-first hydration preserves the true wrapper ids, which exactly match
+  // turn_metadata.parentId.
+  const metadataByMessageId = new Map<string, TurnMetadata>();
+  if (turnMetadataEntries) {
+    for (const entry of turnMetadataEntries as Array<TurnMetadata & { parentMessageId?: string }>) {
+      if (entry.parentMessageId) {
+        metadataByMessageId.set(entry.parentMessageId, entry);
+      }
+    }
+  }
 
   // Build a map of tool results by toolCallId for matching
   const toolResults = new Map<string, { toolName: string; content: unknown; details: unknown; isError: boolean }>();
@@ -90,7 +107,7 @@ function hydrateFromMessages(state: TurnTranscriptState, messages: unknown[]): T
           text: content,
         });
       }
-    } else if (role === "assistant") {
+    } else if (role === "assistant" || role === "system") {
       const events: TurnEvent[] = [];
 
       // Parse content blocks to find text, thinking, and tool calls
@@ -129,17 +146,26 @@ function hydrateFromMessages(state: TurnTranscriptState, messages: unknown[]): T
       }
 
       if (events.length > 0) {
+        const messageId = (msg.id as string) || (msg.messageId as string) || "";
+        const metadata = messageId ? metadataByMessageId.get(messageId) : undefined;
         turns.push({
           kind: "agent",
           id: generateTurnId(),
           timestamp: (msg.timestamp as number) || Date.now(),
           events,
           active: false,
+          metadata,
         });
       }
     }
     // Skip toolResult messages — they're consumed above via the toolResults map
   }
+
+  // Seed composer history from hydrated user messages
+  const userTexts = turns
+    .filter((t): t is Turn & { kind: "user" } => t.kind === "user")
+    .map((t) => (t as { text: string }).text);
+  seedComposerHistory(userTexts);
 
   return { ...state, turns };
 }
@@ -166,6 +192,22 @@ function handleChatMessage(
       turns: [
         ...state.turns,
         { kind: "user", id: generateTurnId(), timestamp: Date.now(), text: content },
+      ],
+    };
+  }
+
+  if (role === "system" && content) {
+    return {
+      ...state,
+      turns: [
+        ...state.turns,
+        {
+          kind: "agent",
+          id: generateTurnId(),
+          timestamp: Date.now(),
+          events: [{ kind: "text", content, streaming: false }],
+          active: false,
+        },
       ],
     };
   }
@@ -345,6 +387,23 @@ function finalizeAgentTurn(state: TurnTranscriptState): TurnTranscriptState {
     turns[lastIdx] = { ...turns[lastIdx]!, active: false } as Turn;
   }
   return { ...state, turns };
+}
+
+/**
+ * Attach frozen metadata to the most recent agent turn.
+ * Called when the extension emits `runtime.turnMetadata` after agent_end.
+ */
+function attachTurnMetadata(state: TurnTranscriptState, metadata: TurnMetadata): TurnTranscriptState {
+  // Walk backwards to find the most recent agent turn (should be the last one)
+  const turns = [...state.turns];
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const turn = turns[i]!;
+    if (turn.kind === "agent") {
+      turns[i] = { ...turn, metadata };
+      return { ...state, turns };
+    }
+  }
+  return state;
 }
 
 function finalizeStreamingEvents(state: TurnTranscriptState): TurnTranscriptState {

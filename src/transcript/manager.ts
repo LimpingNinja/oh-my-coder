@@ -21,6 +21,7 @@ import type {
   ChatMessageForWebview,
   ChatDelta,
   OmpRpcFrameForWebview,
+  TurnMetadataPayload,
 } from "../protocol/webviewMessages.ts";
 import type { TranscriptState, TranscriptMessage } from "./types.ts";
 import { createEmptyTranscript, generateMessageId } from "./types.ts";
@@ -96,14 +97,22 @@ export class TranscriptManager {
   }
 
   /**
-   * Hydrate the transcript from a get_messages response (resume path).
+   * Hydrate the transcript from persisted/resumed messages (resume path).
    *
    * Passes the raw messages (with full content block arrays) to the webview
    * so the turn reducer can reconstruct tool calls, thinking, and text from
    * the original JSONL structure.  This includes toolResult messages which
    * the reducer correlates with toolCall blocks by toolCallId.
+   *
+   * Optional turnMetadataEntries are frozen per-turn snapshots extracted from
+   * custom JSONL entries — the webview reducer uses them to attach metadata to
+   * the corresponding agent turns.
    */
-  hydrateFromMessages(messages: ChatMessage[]): void {
+  hydrateFromMessages(
+    messages: ChatMessage[],
+    turnMetadataEntries?: TurnMetadataPayload[],
+    source: "jsonl" | "omp" = "omp",
+  ): void {
     // Build host-side transcript state (text-only, for internal bookkeeping)
     const transcriptMessages: TranscriptMessage[] = messages
       .filter((raw) => {
@@ -159,9 +168,10 @@ export class TranscriptManager {
       type: "chat.messagesLoaded",
       sessionPath: this.state.sessionPath,
       messages: webviewMessages,
+      turnMetadataEntries,
     });
 
-    this.log(`hydrated ${webviewMessages.length} messages (${transcriptMessages.length} transcript + toolResults) from get_messages`);
+    this.log(`hydrated ${webviewMessages.length} messages (${transcriptMessages.length} transcript + toolResults) from ${source}`);
   }
 
   /**
@@ -174,6 +184,38 @@ export class TranscriptManager {
     const msg: TranscriptMessage = {
       id: generateMessageId(),
       role: "user",
+      content,
+      thinking: "",
+      streaming: false,
+      finalized: true,
+      startedAt: Date.now(),
+      finalizedAt: Date.now(),
+      toolCalls: [],
+    };
+
+    this.state = {
+      ...this.state,
+      messages: [...this.state.messages, msg],
+    };
+
+    this.config.postToWebview({
+      type: "chat.message",
+      sessionPath: this.state.sessionPath,
+      message: toWebviewMessage(msg),
+    });
+
+    return msg;
+  }
+
+  /**
+   * Add a system note to the transcript.
+   *
+   * Used for non-fatal restore/fallback messaging during hydration.
+   */
+  addSystemMessage(content: string): TranscriptMessage {
+    const msg: TranscriptMessage = {
+      id: generateMessageId(),
+      role: "system",
       content,
       thinking: "",
       streaming: false,

@@ -44,7 +44,7 @@ export function useMessageHandler() {
 
       // Process through turn-based reducer for all transcript-relevant messages
       const turnTypes = new Set([
-        "chat.messagesLoaded", "chat.message", "chat.delta", "runtime.frame", "error",
+        "chat.messagesLoaded", "chat.message", "chat.delta", "runtime.frame", "runtime.turnMetadata", "error",
       ]);
       if (turnTypes.has(msg.type)) {
         const { turnTranscript } = getState();

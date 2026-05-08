@@ -68,6 +68,15 @@ export interface RpcRequest {
   params?: Record<string, unknown>;
 }
 
+export interface TurnMetadataSnapshot {
+  model?: { provider: string; modelId: string };
+  thinkingLevel?: string;
+  contextPercent?: number;
+  tokens?: { input: number; output: number; cacheRead: number };
+  costUsd?: number;
+  durationMs?: number;
+}
+
 export interface BridgeState {
   latestSelection: BridgeSelection | undefined;
   notifications: BridgeNotification[];
@@ -75,4 +84,5 @@ export interface BridgeState {
   enqueue(type: BridgeNotification["type"], data: unknown): void;
   cacheCodeAction(action: vscode.CodeAction | vscode.Command, filePath: string): string;
   reportTerminalSession(terminalId: string, sessionFile: string): void;
+  getTurnMetadata(): TurnMetadataSnapshot;
 }

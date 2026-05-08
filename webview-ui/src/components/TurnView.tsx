@@ -4,7 +4,7 @@
  * Agent turns: sequential events rendered by type (no role labels).
  */
 
-import type { Turn, TurnEvent, ToolCallEvent, TaskProgress } from "../state/turns";
+import type { Turn, TurnEvent, TurnMetadata, ToolCallEvent, TaskProgress } from "../state/turns";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolBlock } from "./ToolBlock";
 import { CodeBlock } from "./CodeBlock";
@@ -13,7 +13,7 @@ import { ClickableText } from "./ClickableText";
 import { UiRequestTurn } from "./UiRequestTurn";
 import { extractResultText, stripTaskSummaryXml } from "../utils/resultParser";
 import { getVSCodeAPI } from "../vscode";
-import { getState } from "../state/store";
+import { useAppState } from "../state/store";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useState, useCallback } from "react";
@@ -59,6 +59,17 @@ function UserTurn({ text, queuedAs }: { text: string; queuedAs?: "steer" | "foll
 function AgentTurn({ turn }: { turn: Extract<Turn, { kind: "agent" }> }) {
   const [copied, setCopied] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const header = useAppState().header;
+  const meta = turn.metadata;
+
+  // For the stats panel: use frozen turn metadata when available,
+  // fall back to live header state for the currently-active turn.
+  const model = meta?.model ?? header.details?.model;
+  const tokens = meta?.tokens ?? (turn.active ? header.tokens : undefined);
+  const thinkingLevel = meta?.thinkingLevel ?? (turn.active ? header.details?.thinkingLevel : undefined);
+  const costUsd = meta?.costUsd;
+  const durationMs = meta?.durationMs;
+  const contextPercent = meta?.contextPercent ?? (turn.active ? header.contextPercent : undefined);
 
   const fullText = turn.events
     .filter((e) => e.kind === "text")
@@ -95,27 +106,78 @@ function AgentTurn({ turn }: { turn: Extract<Turn, { kind: "agent" }> }) {
         </div>
       )}
 
-      {/* Stats panel */}
+      {/* Stats panel — per-response details */}
       {showStats && (
         <div className="omp-msg-stats">
           <div className="omp-msg-stats-header">RESPONSE DETAILS</div>
           <div className="omp-msg-stats-grid">
+            {/* Timing */}
             <div className="omp-msg-stats-item">
               <span className="omp-msg-stats-label">Time</span>
-              <span className="omp-msg-stats-value">
-                {new Date(turn.timestamp).toLocaleTimeString()}
-              </span>
+              <span className="omp-msg-stats-value">{new Date(turn.timestamp).toLocaleTimeString()}</span>
             </div>
+            {durationMs != null && (
+              <div className="omp-msg-stats-item">
+                <span className="omp-msg-stats-label">Duration</span>
+                <span className="omp-msg-stats-value">{formatDuration(durationMs)}</span>
+              </div>
+            )}
+
+            {/* Events/tools */}
             <div className="omp-msg-stats-item">
               <span className="omp-msg-stats-label">Events</span>
               <span className="omp-msg-stats-value">{turn.events.length}</span>
             </div>
             <div className="omp-msg-stats-item">
               <span className="omp-msg-stats-label">Tools</span>
-              <span className="omp-msg-stats-value">
-                {turn.events.filter((e) => e.kind === "tool_call").length}
-              </span>
+              <span className="omp-msg-stats-value">{turn.events.filter((e) => e.kind === "tool_call").length}</span>
             </div>
+
+            {/* Model & token usage (per-turn) */}
+            {model && (
+              <div className="omp-msg-stats-item">
+                <span className="omp-msg-stats-label">Model</span>
+                <span className="omp-msg-stats-value" title={`${model.provider}/${model.modelId}`}>
+                  {model.modelId.split('/').pop()}
+                </span>
+              </div>
+            )}
+            {tokens && (
+              <>
+                <div className="omp-msg-stats-item">
+                  <span className="omp-msg-stats-label">Input</span>
+                  <span className="omp-msg-stats-value">{formatCount(tokens.input)}</span>
+                </div>
+                <div className="omp-msg-stats-item">
+                  <span className="omp-msg-stats-label">Output</span>
+                  <span className="omp-msg-stats-value">{formatCount(tokens.output)}</span>
+                </div>
+                <div className="omp-msg-stats-item">
+                  <span className="omp-msg-stats-label">Cache</span>
+                  <span className="omp-msg-stats-value">{formatCount(tokens.cacheRead)}</span>
+                </div>
+              </>
+            )}
+            {costUsd != null && (
+              <div className="omp-msg-stats-item">
+                <span className="omp-msg-stats-label">Cost</span>
+                <span className="omp-msg-stats-value">${costUsd.toFixed(4)}</span>
+              </div>
+            )}
+
+            {/* Context & thinking */}
+            {contextPercent != null && (
+              <div className="omp-msg-stats-item">
+                <span className="omp-msg-stats-label">Context</span>
+                <span className="omp-msg-stats-value">{contextPercent}%</span>
+              </div>
+            )}
+            {thinkingLevel && (
+              <div className="omp-msg-stats-item">
+                <span className="omp-msg-stats-label">Thinking</span>
+                <span className="omp-msg-stats-value">{thinkingLevel}</span>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -366,6 +428,12 @@ function SubAgentRow({ progress: p }: { progress: TaskProgress }) {
       )}
     </div>
   );
+}
+
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
 }
 
 function getToolIcon(name: string): string {

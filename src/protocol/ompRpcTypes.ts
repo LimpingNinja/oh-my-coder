@@ -62,8 +62,9 @@ export interface OmpToolSchema {
 
 /** Context usage metrics from get_state. */
 export interface OmpContextUsage {
-  tokens?: number;
-  percent?: number;
+  tokens: number | null;
+  percent: number | null;
+  contextWindow: number;
 }
 
 // ============================================================================
