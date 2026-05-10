@@ -1,17 +1,21 @@
 import { createBridge } from "./bridge/server.ts";
 import type { BridgeContext } from "./bridge/types.ts";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { findOmpBinary, createOmpEnvironment } from "./omp.ts";
 import { OmpChatProvider } from "./webview/provider.ts";
 import type {
+  ChatAttachment,
   ExtensionToWebviewMessage,
+  ChatFileContext,
   WebviewToExtensionMessage,
   OmpLaunchState,
 } from "./protocol/webviewMessages.ts";
 import { EMPTY_HEADER_STATE } from "./protocol/footerTypes.ts";
 import type { ChatHeaderState, ChatFooterItem } from "./protocol/footerTypes.ts";
 import { listWorkspaceSessions, validateResumePath } from "./session/discovery.ts";
-import { resolveWorkspaceScope, getEffectiveWorkspaceFolder } from "./session/workspaceScope.ts";
+import { resolveWorkspaceScope, getEffectiveWorkspaceFolder, getOmpSessionDir } from "./session/workspaceScope.ts";
 import type { OmpSessionListState, OmpSessionSummary } from "./session/types.ts";
 import { OmpRpcControllerImpl } from "./rpc/controller.ts";
 import type { OmpLaunchRequest } from "./rpc/types.ts";
@@ -50,6 +54,9 @@ let currentActiveSessionPath: string | undefined;
 
 // Transcript manager — owns transcript state for the active session.
 let transcriptManager: TranscriptManager | undefined;
+
+// Pending user attachments — stashed before prompt, consumed by bridge callback.
+let pendingUserAttachments: { fileContexts: Array<{ path: string; line?: number; endLine?: number; languageId?: string }> } | null = null;
 
 // Header state — tracks the header presentation state for the webview.
 let currentHeaderState: ChatHeaderState = { ...EMPTY_HEADER_STATE };
@@ -99,7 +106,11 @@ async function startBridge(
         : undefined,
       costUsd: turnCostAccumulator > 0 ? turnCostAccumulator : undefined,
       durationMs: turnStartTimestamp > 0 ? Date.now() - turnStartTimestamp : undefined,
-    }));
+    }), () => {
+      const result = pendingUserAttachments;
+      pendingUserAttachments = null;
+      return result;
+    });
     bridgeContext = bridge;
     outputChannel.appendLine(`[omp] bridge started at ${bridge.url}`);
     return { url: bridge.url, token: bridge.token };
@@ -191,15 +202,34 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       break;
     }
 
+    case "session.delete":
+      outputChannel.appendLine(`[omp] session.delete: ${message.sessionPath}`);
+      void handleSessionDelete(message.sessionPath);
+      break;
+
     case "chat.send":
       outputChannel.appendLine(`[omp] chat.send: ${message.sessionPath} (behavior: ${message.behavior ?? "auto"})`);
-      handleChatSend(message.sessionPath, message.content, message.behavior);
+      handleChatSend(message.sessionPath, message.content, message.behavior, message.fileContexts, message.attachments);
       break;
 
     case "chat.abort":
       outputChannel.appendLine(`[omp] chat.abort: ${message.sessionPath}`);
       handleChatAbort();
       break;
+
+    case "image.open": {
+      const blobRef = message.blobRef as string | undefined;
+      if (blobRef) {
+        const match = blobRef.match(/^blob:sha256:([a-f0-9]+)$/);
+        if (match?.[1]) {
+          const blobPath = require("node:path").join(
+            require("node:os").homedir(), ".omp", "agent", "blobs", match[1],
+          );
+          void vscode.commands.executeCommand("vscode.open", vscode.Uri.file(blobPath));
+        }
+      }
+      break;
+    }
 
     case "runtime.compact":
       outputChannel.appendLine("[omp] runtime.compact");
@@ -606,6 +636,7 @@ async function launchSession(
             messages,
             jsonlHydration.turnMetadataEntries.length > 0 ? jsonlHydration.turnMetadataEntries : undefined,
             "jsonl",
+            jsonlHydration.userAttachmentsEntries.length > 0 ? jsonlHydration.userAttachmentsEntries : undefined,
           );
           outputChannel.appendLine(
             `[omp] hydrated from JSONL: ${messages.length} messages, ${jsonlHydration.turnMetadataEntries.length} turn metadata entries`,
@@ -744,6 +775,8 @@ async function handleChatSend(
   sessionPath: string,
   content: string,
   behavior?: "steer" | "followUp" | "forceSend",
+  fileContexts?: ChatFileContext[],
+  attachments?: ChatAttachment[],
 ): Promise<void> {
   if (!rpcController?.isRunning()) {
     postToWebview({
@@ -756,30 +789,46 @@ async function handleChatSend(
 
   try {
     const state = await rpcController.getState();
+    const runtimeMessage = await buildRuntimePrompt(content, fileContexts);
+    const runtimeImages = attachments?.map((attachment) => ({
+      type: "image" as const,
+      data: attachment.data,
+      mimeType: attachment.mediaType,
+    }));
+
+    // Stash file contexts for bridge callback (persisted as user_attachments in JSONL)
+    if (fileContexts && fileContexts.length > 0) {
+      pendingUserAttachments = { fileContexts };
+    } else {
+      pendingUserAttachments = null;
+    }
 
     let effectiveBehavior: "steer" | "followUp" | "forceSend" | undefined;
 
     if (behavior === "forceSend") {
       // Abort current turn and send as fresh prompt
-      await rpcController.send({ type: "abort_and_prompt", message: content });
+      await rpcController.send({ type: "abort_and_prompt", message: runtimeMessage, images: runtimeImages });
       effectiveBehavior = "forceSend";
     } else if (state.isStreaming) {
       // Auto-decide based on interruptMode if no explicit behavior
       effectiveBehavior = behavior ?? (state.interruptMode === "immediate" ? "steer" : "followUp");
 
       if (effectiveBehavior === "steer") {
-        await rpcController.send({ type: "steer", message: content });
+        await rpcController.send({ type: "steer", message: runtimeMessage, images: runtimeImages });
       } else {
-        await rpcController.send({ type: "follow_up", message: content });
+        await rpcController.send({ type: "follow_up", message: runtimeMessage, images: runtimeImages });
       }
     } else {
       // Not streaming — normal prompt
-      await rpcController.prompt({ message: content });
+      await rpcController.prompt({ message: runtimeMessage, images: runtimeImages });
     }
 
     // Prompt accepted — add user message to transcript
     if (transcriptManager) {
-      transcriptManager.addUserMessage(content);
+      transcriptManager.addUserMessage(content, {
+        images: attachments?.map((a) => ({ mimeType: a.mediaType, data: a.data })),
+        fileContexts: fileContexts?.length ? fileContexts : undefined,
+      });
     }
 
     // Notify webview of the queued behavior so it can style the message
@@ -799,6 +848,65 @@ async function handleChatSend(
       message: `Send failed: ${msg}`,
     });
   }
+}
+
+async function buildRuntimePrompt(content: string, fileContexts?: ChatFileContext[]): Promise<string> {
+  if (!fileContexts || fileContexts.length === 0) return content;
+
+  const sections: string[] = [];
+  for (const context of fileContexts) {
+    const section = await buildFileContextSection(context);
+    if (section) sections.push(section);
+  }
+
+  if (sections.length === 0) return content;
+
+  return `${sections.join("\n\n")}\n\nUser request:\n${content}`;
+}
+
+async function buildFileContextSection(context: ChatFileContext): Promise<string | undefined> {
+  try {
+    const uri = vscode.Uri.file(context.path);
+    const document = await vscode.workspace.openTextDocument(uri);
+    const text = sliceContextText(document.getText(), context.line, context.endLine);
+    const range = formatContextRange(context.line, context.endLine);
+    const language = context.languageId || document.languageId || "text";
+    const filename = pathBasename(context.path);
+
+    return [
+      `<attached-file filename="${filename}" language="${language}"${range ? ` range="${range}"` : ""}>`,
+      "```",
+      text,
+      "```",
+      `</attached-file>`,
+    ].join("\n");
+  } catch {
+    const filename = pathBasename(context.path);
+    const range = formatContextRange(context.line, context.endLine);
+    return `<attached-file filename="${filename}"${range ? ` range="${range}"` : ""}>\n[Could not read file content]\n</attached-file>`;
+  }
+}
+
+function formatContextRange(line?: number, endLine?: number): string {
+  if (line != null && endLine != null && endLine !== line) return `lines ${line}-${endLine}`;
+  if (line != null) return `line ${line}`;
+  return "";
+}
+
+function sliceContextText(fullText: string, line?: number, endLine?: number): string {
+  if (line == null && endLine == null) {
+    return fullText;
+  }
+  const lines = fullText.split(/\r?\n/);
+  const startLine = Math.max(1, line ?? 1);
+  const finalLine = Math.max(startLine, endLine ?? line ?? Math.min(lines.length, startLine + 24));
+  const slice = lines.slice(startLine - 1, finalLine);
+  return slice.join("\n");
+}
+
+function pathBasename(filePath: string): string {
+  const parts = filePath.split(/[\\/]/);
+  return parts[parts.length - 1] || filePath;
 }
 
 /**
@@ -1231,6 +1339,73 @@ async function refreshSessions(): Promise<void> {
   }
 }
 
+async function handleSessionDelete(sessionPath: string): Promise<void> {
+  const fail = async (message: string) => {
+    outputChannel.appendLine(`[omp] session.delete failed: ${message}`);
+    postToWebview({ type: "session.deleteResult", sessionPath, success: false, message });
+    await refreshSessions();
+  };
+
+  try {
+    const scope = resolveWorkspaceScope(vscode.workspace.workspaceFolders);
+    const workspaceFolder = getEffectiveWorkspaceFolder(scope);
+    if (!workspaceFolder) {
+      await fail("No workspace folder is available for session deletion.");
+      return;
+    }
+
+    if (currentActiveSessionPath === sessionPath && rpcController?.isRunning()) {
+      await fail("Cannot delete the active session. Stop or switch sessions first.");
+      return;
+    }
+
+    const sessionDir = path.resolve(getOmpSessionDir(workspaceFolder));
+    const targetPath = path.resolve(sessionPath);
+    if (!path.isAbsolute(sessionPath) || path.extname(targetPath) !== ".jsonl") {
+      await fail("Refusing to delete an invalid session path.");
+      return;
+    }
+
+    const relative = path.relative(sessionDir, targetPath);
+    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative) || relative.includes(path.sep)) {
+      await fail("Refusing to delete a session outside this workspace.");
+      return;
+    }
+
+    const discovered = currentSessions.some((session) => path.resolve(session.path) === targetPath);
+    if (!discovered) {
+      await fail("Session is not in the current workspace session list.");
+      return;
+    }
+
+    try {
+      const stat = await fs.lstat(targetPath);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        await fail("Refusing to delete a non-file session path.");
+        return;
+      }
+      await fs.unlink(targetPath);
+    } catch (err) {
+      if (!isNodeErrorCode(err, "ENOENT")) throw err;
+    }
+
+    if (selectedSessionPath === sessionPath) {
+      selectedSessionPath = undefined;
+      pushSelectionState();
+    }
+
+    await refreshSessions();
+    postToWebview({ type: "session.deleteResult", sessionPath, success: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await fail(message);
+  }
+}
+
+function isNodeErrorCode(err: unknown, code: string): boolean {
+  return !!err && typeof err === "object" && "code" in err && (err as { code?: unknown }).code === code;
+}
+
 /**
  * Push the current selection state to the webview.
  *
@@ -1615,6 +1790,8 @@ export async function activate(context: vscode.ExtensionContext) {
     ["omp.openChat", () => focusChatView()],
     ["omp.newSession", () => focusChatView()],
     ["omp.resumeSession", () => focusChatView()],
+    ["omp.addFileToChatContext", (uri?: vscode.Uri) => addFileToChatContext(uri)],
+    ["omp.addSelectionToChatContext", () => addSelectionToChatContext()],
     ["omp.focusInput", () => sendRuntimeCommand("focusInput")],
     ["omp.switchModel", () => sendRuntimeCommand("switchModel")],
     ["omp.cycleThinkingLevel", () => sendRuntimeCommand("cycleThinkingLevel")],
@@ -1712,6 +1889,43 @@ export async function deactivate() {
  */
 function focusChatView(): void {
   vscode.commands.executeCommand("omp.chatView.focus");
+}
+
+async function addFileToChatContext(uri?: vscode.Uri): Promise<void> {
+  const targetUri = uri ?? vscode.window.activeTextEditor?.document.uri;
+  if (!targetUri || targetUri.scheme !== "file") return;
+
+  const activeEditor = vscode.window.activeTextEditor;
+  const selection = activeEditor?.document.uri.toString() === targetUri.toString() ? activeEditor.selection : undefined;
+
+  focusChatView();
+  postToWebview({
+    type: "composer.addFileContext",
+    context: {
+      path: targetUri.fsPath,
+      languageId: activeEditor?.document.uri.toString() === targetUri.toString() ? activeEditor.document.languageId : undefined,
+      line: selection ? selection.start.line + 1 : undefined,
+      endLine: selection && !selection.isEmpty ? selection.end.line + 1 : undefined,
+    },
+  });
+}
+
+async function addSelectionToChatContext(): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.uri.scheme !== "file") return;
+  const selection = editor.selection;
+  if (!selection || selection.isEmpty) return;
+
+  focusChatView();
+  postToWebview({
+    type: "composer.addFileContext",
+    context: {
+      path: editor.document.uri.fsPath,
+      languageId: editor.document.languageId,
+      line: selection.start.line + 1,
+      endLine: selection.end.line + 1,
+    },
+  });
 }
 
 /**

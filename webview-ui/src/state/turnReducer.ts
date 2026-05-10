@@ -100,11 +100,15 @@ function hydrateFromMessages(state: TurnTranscriptState, messages: unknown[], tu
     if (role === "user") {
       const content = extractContent(msg.content);
       if (content) {
+        const images = (msg.images as Array<{ mimeType: string; data: string | null }> | undefined) ?? extractImages(msg.content);
+        const fileContexts = msg.fileContexts as Array<{ path: string; line?: number; endLine?: number; languageId?: string }> | undefined;
         turns.push({
           kind: "user",
           id: generateTurnId(),
           timestamp: (msg.timestamp as number) || Date.now(),
           text: content,
+          images: images.length > 0 ? images : undefined,
+          fileContexts: fileContexts?.length ? fileContexts : undefined,
         });
       }
     } else if (role === "assistant" || role === "system") {
@@ -144,6 +148,9 @@ function hydrateFromMessages(state: TurnTranscriptState, messages: unknown[], tu
         if (thinking) events.push({ kind: "thinking", content: thinking, streaming: false });
         if (content) events.push({ kind: "text", content, streaming: false });
       }
+
+      const stop = getStopEvent(msg);
+      if (stop) events.push(stop);
 
       if (events.length > 0) {
         const messageId = (msg.id as string) || (msg.messageId as string) || "";
@@ -187,11 +194,14 @@ function handleChatMessage(
     if (lastTurn?.kind === "user" && lastTurn.text === content) {
       return state;
     }
+    // Extract images from content blocks or top-level field
+    const images = (msg.images as Array<{ mimeType: string; data: string | null }> | undefined) ?? extractImages(msg.content);
+    const fileContexts = msg.fileContexts as Array<{ path: string; line?: number; endLine?: number; languageId?: string }> | undefined;
     return {
       ...state,
       turns: [
         ...state.turns,
-        { kind: "user", id: generateTurnId(), timestamp: Date.now(), text: content },
+        { kind: "user", id: generateTurnId(), timestamp: Date.now(), text: content, images: images.length > 0 ? images : undefined, fileContexts },
       ],
     };
   }
@@ -221,9 +231,53 @@ function handleChatMessage(
     if (content && !msg.streaming) {
       return updateLastTextEvent(state, content);
     }
+
+    const stop = getStopEvent(msg);
+    if (stop) {
+      return appendEventToCurrentTurn(state, stop);
+    }
   }
 
   return state;
+}
+
+function getStopEvent(msg: Record<string, unknown>): TurnEvent | null {
+  const stopReason = typeof msg.stopReason === "string" ? msg.stopReason : undefined;
+  if (stopReason !== "error" && stopReason !== "length" && stopReason !== "aborted") return null;
+  const fallback = getStopFallback(stopReason);
+  const message = typeof msg.errorMessage === "string" && msg.errorMessage.trim()
+    ? msg.errorMessage.trim()
+    : fallback.message;
+  return {
+    kind: "error",
+    title: fallback.title,
+    message,
+    stopReason,
+    tone: fallback.tone,
+    raw: msg.raw ?? msg,
+  };
+}
+
+function getStopFallback(stopReason: string): { title: string; message: string; tone: "error" | "warning" | "cancelled" } {
+  if (stopReason === "length") {
+    return {
+      title: "Assistant response reached limit",
+      message: "The assistant stopped because the response reached a length or token limit.",
+      tone: "warning",
+    };
+  }
+  if (stopReason === "aborted") {
+    return {
+      title: "Assistant response aborted",
+      message: "The assistant response was cancelled before completion.",
+      tone: "cancelled",
+    };
+  }
+  return {
+    title: "Assistant response error",
+    message: "Assistant response stopped with an error.",
+    tone: "error",
+  };
 }
 
 // ── Chat delta (streaming text/thinking) ──────────────────────────────
@@ -556,19 +610,48 @@ function updateLastRetry(state: TurnTranscriptState, active: boolean): TurnTrans
 
 // ── Content extraction ────────────────────────────────────────────────
 
+/**
+ * Strip `<attached-file>...</attached-file>` blocks and the `User request:\n`
+ * wrapper that buildRuntimePrompt adds when file contexts are included.
+ */
+function stripAttachedFileWrapper(text: string): string {
+  // Check if text contains attached-file blocks followed by "User request:" or "User Request:"
+  const userRequestMatch = text.match(/\n\nUser [Rr]equest:\n([\s\S]*)$/);
+  if (userRequestMatch && text.includes("<attached-file")) {
+    return userRequestMatch[1].trim();
+  }
+  return text;
+}
+
 function extractContent(content: unknown): string {
-  if (typeof content === "string") return content;
+  if (typeof content === "string") return stripAttachedFileWrapper(content);
   if (Array.isArray(content)) {
-    return content
+    const raw = content
       .filter((b: any) => b?.type === "text" && typeof b.text === "string")
       .map((b: any) => b.text)
       .join("");
+    return stripAttachedFileWrapper(raw);
   }
   if (content && typeof content === "object") {
     const c = content as Record<string, unknown>;
-    if (typeof c.text === "string") return c.text;
+    if (typeof c.text === "string") return stripAttachedFileWrapper(c.text);
   }
   return "";
+}
+
+function extractImages(content: unknown): Array<{ mimeType: string; data: string | null }> {
+  if (!Array.isArray(content)) return [];
+  const images: Array<{ mimeType: string; data: string | null }> = [];
+  for (const block of content) {
+    if (block && typeof block === "object" && (block as any).type === "image") {
+      const b = block as Record<string, unknown>;
+      const mimeType = (b.mimeType as string) ?? (b.media_type as string) ?? "image/png";
+      const data = (b.data as string) ?? null;
+      // Skip unresolved blob refs — they'll show as broken-image icon
+      images.push({ mimeType, data: data?.startsWith("blob:") ? null : data });
+    }
+  }
+  return images;
 }
 
 function extractThinking(content: unknown): string {

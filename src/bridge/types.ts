@@ -77,6 +77,10 @@ export interface TurnMetadataSnapshot {
   durationMs?: number;
 }
 
+export interface UserAttachmentsSnapshot {
+  fileContexts?: Array<{ path: string; line?: number; endLine?: number; languageId?: string }>;
+}
+
 export interface BridgeState {
   latestSelection: BridgeSelection | undefined;
   notifications: BridgeNotification[];
@@ -85,4 +89,5 @@ export interface BridgeState {
   cacheCodeAction(action: vscode.CodeAction | vscode.Command, filePath: string): string;
   reportTerminalSession(terminalId: string, sessionFile: string): void;
   getTurnMetadata(): TurnMetadataSnapshot;
+  getUserAttachments(): UserAttachmentsSnapshot | null;
 }

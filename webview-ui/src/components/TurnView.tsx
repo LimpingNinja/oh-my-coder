@@ -11,7 +11,7 @@ import { CodeBlock } from "./CodeBlock";
 import { Icon } from "./Icon";
 import { ClickableText } from "./ClickableText";
 import { UiRequestTurn } from "./UiRequestTurn";
-import { extractResultText, stripTaskSummaryXml } from "../utils/resultParser";
+import { extractResultText, getTaskOutputPath, parseTaskResultSegments } from "../utils/resultParser";
 import { getVSCodeAPI } from "../vscode";
 import { useAppState } from "../state/store";
 import ReactMarkdown from "react-markdown";
@@ -26,7 +26,7 @@ export function TurnView({ turn }: TurnViewProps) {
   return (
     <div data-turn-id={turn.id}>
       {turn.kind === "user" ? (
-        <UserTurn text={turn.text} queuedAs={turn.queuedAs} />
+        <UserTurn text={turn.text} images={turn.images} fileContexts={turn.fileContexts} queuedAs={turn.queuedAs} />
       ) : turn.kind === "ui-request" ? (
         <UiRequestTurn turnId={turn.id} request={turn.request} response={turn.response} />
       ) : (
@@ -36,10 +36,17 @@ export function TurnView({ turn }: TurnViewProps) {
   );
 }
 
-function UserTurn({ text, queuedAs }: { text: string; queuedAs?: "steer" | "followUp" }) {
+function UserTurn({ text, images, fileContexts, queuedAs }: {
+  text: string;
+  images?: Array<{ mimeType: string; data: string | null }>;
+  fileContexts?: Array<{ path: string; line?: number; endLine?: number; languageId?: string }>;
+  queuedAs?: "steer" | "followUp";
+}) {
   const bubbleClass = queuedAs
     ? `omp-msg-content omp-user-bubble omp-user-bubble--queued`
     : "omp-msg-content omp-user-bubble";
+
+  const hasAttachments = (images && images.length > 0) || (fileContexts && fileContexts.length > 0);
 
   return (
     <div className="omp-turn omp-turn-user">
@@ -51,6 +58,31 @@ function UserTurn({ text, queuedAs }: { text: string; queuedAs?: "steer" | "foll
           </span>
         )}
         {text}
+        {hasAttachments && (
+          <div className="omp-user-attachments">
+            {fileContexts?.map((ctx, i) => (
+              <div key={`fc-${i}`} className="omp-context-chip">
+                <i className="codicon codicon-file" />
+                <span className="omp-context-chip-text" title={ctx.path}>
+                  {ctx.path.split("/").pop()}{ctx.line ? `:${ctx.line}${ctx.endLine ? `-${ctx.endLine}` : ""}` : ""}
+                </span>
+              </div>
+            ))}
+            {images?.map((img, i) => (
+              <div key={`img-${i}`} className="omp-context-chip omp-context-chip--image">
+                {img.data ? (
+                  <img
+                    src={`data:${img.mimeType};base64,${img.data}`}
+                    className="omp-context-chip-image"
+                    alt="Attached image"
+                  />
+                ) : (
+                  <i className="codicon codicon-file-media" title="Image unavailable" />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -239,13 +271,36 @@ function EventView({ event }: { event: TurnEvent }) {
       );
 
     case "error":
-      return (
-        <div className="omp-error-block">
-          <Icon name="error" />
-          <span>{event.message}</span>
-        </div>
-      );
+      return <ErrorEventBlock event={event} />;
   }
+}
+
+function ErrorEventBlock({ event }: { event: Extract<TurnEvent, { kind: "error" }> }) {
+  const [showRaw, setShowRaw] = useState(false);
+  const raw = event.raw ? formatRaw(event.raw) : "";
+  const tone = event.tone ?? "error";
+  const icon = tone === "cancelled" ? "circle-slash" : tone === "warning" ? "warning" : "error";
+
+  return (
+    <div className={`omp-error-block omp-error-block--assistant omp-error-block--${tone}`}>
+      <div className="omp-error-block-main">
+        <Icon name={icon} />
+        <div className="omp-error-block-copy">
+          <div className="omp-error-block-title">{event.title ?? "Error"}</div>
+          <div className="omp-error-block-message">{event.message}</div>
+          {event.stopReason && <div className="omp-error-block-meta">stopReason: {event.stopReason}</div>}
+        </div>
+      </div>
+      {raw && (
+        <div className="omp-error-raw-toggle">
+          <button className="omp-tool-raw-btn" onClick={() => setShowRaw(!showRaw)}>
+            {showRaw ? "Hide raw details" : "View raw details"}
+          </button>
+          {showRaw && <pre className="omp-error-raw-json">{raw}</pre>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Renders a tool call — with special handling for task/agent spawns */
@@ -305,7 +360,13 @@ function TaskBlock({ event }: { event: ToolCallEvent }) {
 
   // Parse final result
   const resultText = extractResultText(event.result);
-  const resultSummary = resultText ? stripTaskSummaryXml(resultText) : null;
+  const resultSegments = resultText ? parseTaskResultSegments(resultText) : [];
+  const primaryOutputPath = getTaskOutputPath(event.result, resultSegments[0]?.path);
+
+  const handleOpenOutput = useCallback(() => {
+    if (!primaryOutputPath) return;
+    getVSCodeAPI().postMessage({ type: "openFile", path: primaryOutputPath });
+  }, [primaryOutputPath]);
 
   return (
     <div className={`omp-task-block omp-task-${event.status}`}>
@@ -314,9 +375,18 @@ function TaskBlock({ event }: { event: ToolCallEvent }) {
         <Icon name={statusIcon} className={`omp-task-status omp-tool-status-${event.status}`} />
         <span className={`omp-task-header-text${event.status === "running" ? " omp-shimmer" : ""}`}>{headerText}</span>
         {agentCount && <span className="omp-task-count">({agentCount})</span>}
-        <span className="omp-task-popout" title="Open full log">
-          <Icon name="link-external" />
-        </span>
+        {primaryOutputPath && (
+          <span
+            className="omp-task-popout"
+            title="Open agent log"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleOpenOutput();
+            }}
+          >
+            <Icon name="link-external" />
+          </span>
+        )}
       </button>
 
       {isExpanded && (
@@ -339,9 +409,11 @@ function TaskBlock({ event }: { event: ToolCallEvent }) {
           )}
 
           {/* Parsed result summary */}
-          {resultSummary && event.status !== "running" && (
+          {resultSegments.length > 0 && event.status !== "running" && (
             <div className="omp-task-result">
-              <div className="omp-task-result-summary">{resultSummary}</div>
+              {resultSegments.map((segment, index) => (
+                <TaskResultSegmentView key={`${segment.path ?? "segment"}-${index}`} segment={segment} result={event.result} />
+              ))}
               <button className="omp-tool-raw-btn" onClick={() => setShowRawResult(!showRawResult)}>
                 {showRawResult ? "Hide raw" : "View raw"}
               </button>
@@ -354,6 +426,51 @@ function TaskBlock({ event }: { event: ToolCallEvent }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function TaskResultSegmentView({
+  segment,
+  result,
+}: {
+  segment: { path?: string; text: string };
+  result: unknown;
+}) {
+  const outputPath = getTaskOutputPath(result, segment.path);
+  const handleOpenOutput = useCallback(() => {
+    if (!outputPath) return;
+    getVSCodeAPI().postMessage({ type: "openFile", path: outputPath });
+  }, [outputPath]);
+
+  return (
+    <div className="omp-task-result-summary omp-agent-text">
+      {outputPath && (
+        <button className="omp-task-output-link" onClick={handleOpenOutput}>
+          <Icon name="link-external" />
+          Open agent log
+        </button>
+      )}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          code: ({ className, children }: any) => {
+            const match = /language-(\w+)/.exec(className || "");
+            const inline = !match && !String(children).includes("\n");
+            if (!inline) {
+              return (
+                <CodeBlock language={match?.[1] || "text"}>
+                  {String(children).replace(/\n$/, "")}
+                </CodeBlock>
+              );
+            }
+            return <code className="omp-inline-code">{children}</code>;
+          },
+          pre: ({ children }: any) => <>{children}</>,
+        }}
+      >
+        {segment.text}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -434,6 +551,15 @@ function formatCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+function formatRaw(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function getToolIcon(name: string): string {

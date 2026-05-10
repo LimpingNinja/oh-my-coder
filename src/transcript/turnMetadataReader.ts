@@ -10,9 +10,16 @@ import * as fs from "node:fs";
 import type { ChatMessage } from "../protocol/ompRpcTypes.ts";
 import type { TurnMetadataPayload } from "../protocol/webviewMessages.ts";
 
+export interface UserAttachmentsPayload {
+  entryId?: string;
+  parentMessageId?: string;
+  fileContexts?: Array<{ path: string; line?: number; endLine?: number; languageId?: string }>;
+}
+
 export interface JsonlHydrationData {
   messages: ChatMessage[];
   turnMetadataEntries: TurnMetadataPayload[];
+  userAttachmentsEntries: UserAttachmentsPayload[];
 }
 
 function parseJsonlTimestamp(value: unknown): number | undefined {
@@ -41,6 +48,7 @@ export function readHydrationFromJsonl(sessionPath: string): JsonlHydrationData 
 
   const messages: ChatMessage[] = [];
   const turnMetadataEntries: TurnMetadataPayload[] = [];
+  const userAttachmentsEntries: UserAttachmentsPayload[] = [];
 
   for (const line of content.split("\n")) {
     if (!line.trim()) continue;
@@ -57,6 +65,7 @@ export function readHydrationFromJsonl(sessionPath: string): JsonlHydrationData 
         messages.push({
           ...message,
           id: wrapperId,
+          parentId: entry.parentId as string | undefined,
           timestamp: parseJsonlTimestamp(message.timestamp) ?? parseJsonlTimestamp(entry.timestamp),
         });
         continue;
@@ -73,13 +82,26 @@ export function readHydrationFromJsonl(sessionPath: string): JsonlHydrationData 
           costUsd: data.costUsd as number | undefined,
           durationMs: data.durationMs as number | undefined,
         });
+        continue;
+      }
+
+      if (entry.type === "custom" && entry.customType === "user_attachments" && entry.data) {
+        const data = entry.data as Record<string, unknown>;
+        const ua = data.userAttachments as Record<string, unknown> | undefined;
+        if (ua) {
+          userAttachmentsEntries.push({
+            entryId: entry.id as string | undefined,
+            parentMessageId: entry.parentId as string | undefined,
+            fileContexts: ua.fileContexts as UserAttachmentsPayload["fileContexts"],
+          });
+        }
       }
     } catch {
       // Skip malformed lines
     }
   }
 
-  return { messages, turnMetadataEntries };
+  return { messages, turnMetadataEntries, userAttachmentsEntries };
 }
 
 /**

@@ -68,6 +68,16 @@
         "category": "OMP"
       },
       {
+        "command": "omp.addFileToChatContext",
+        "title": "Oh My Coder: Add to Chat Context",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.addSelectionToChatContext",
+        "title": "Oh My Coder: Add Selection to Chat Context",
+        "category": "OMP"
+      },
+      {
         "command": "omp.focusInput",
         "title": "OMP: Focus Input",
         "category": "OMP"
@@ -113,6 +123,27 @@
           "type": "webview",
           "id": "omp.chatView",
           "name": "Chat"
+        }
+      ]
+    },
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "omp.addFileToChatContext",
+          "when": "resourceScheme == file",
+          "group": "navigation@99"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "omp.addSelectionToChatContext",
+          "when": "editorTextFocus && editorHasSelection",
+          "group": "navigation@99"
+        },
+        {
+          "command": "omp.addFileToChatContext",
+          "when": "editorTextFocus && resourceScheme == file",
+          "group": "navigation@100"
         }
       ]
     },

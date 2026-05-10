@@ -129,6 +129,20 @@ export interface FooterRuntimeContext {
   interruptMode?: "immediate" | "wait";
 }
 
+export interface ComposerFileContext {
+  id: string;
+  path: string;
+  languageId?: string;
+  line?: number;
+  endLine?: number;
+}
+
+export interface ComposerImageAttachment {
+  id: string;
+  data: string;
+  mediaType: string;
+}
+
 export interface TodoTask {
   id: string;
   content: string;
@@ -156,6 +170,8 @@ interface AppState {
   header: HeaderState;
   footerEditor: FooterEditorContext;
   footerRuntime: FooterRuntimeContext;
+  composerFileContexts: ComposerFileContext[];
+  composerImageAttachments: ComposerImageAttachment[];
   todos: TodoPhase[];
 }
 
@@ -190,6 +206,8 @@ const initialState: AppState = {
     thinking: undefined,
     thinkingSupported: true,
   },
+  composerFileContexts: [],
+  composerImageAttachments: [],
   todos: [],
 };
 
@@ -236,6 +254,52 @@ export function setTranscript(messages: TranscriptMessage[]) {
 
 export function setTurnTranscript(turnTranscript: TurnTranscriptState) {
   setState({ turnTranscript });
+}
+
+export function addComposerFileContext(context: Omit<ComposerFileContext, "id">) {
+  const existing = state.composerFileContexts.find(
+    (entry) =>
+      entry.path === context.path &&
+      entry.line === context.line &&
+      entry.endLine === context.endLine,
+  );
+  if (existing) return existing.id;
+
+  const id = `ctx_${Date.now()}_${state.composerFileContexts.length + 1}`;
+  setState({
+    composerFileContexts: [...state.composerFileContexts, { id, ...context }],
+  });
+  return id;
+}
+
+export function removeComposerFileContext(id: string) {
+  setState({
+    composerFileContexts: state.composerFileContexts.filter((entry) => entry.id !== id),
+  });
+}
+
+export function clearComposerFileContexts() {
+  if (state.composerFileContexts.length === 0) return;
+  setState({ composerFileContexts: [] });
+}
+
+export function addComposerImageAttachment(attachment: Omit<ComposerImageAttachment, "id">) {
+  const id = `img_${Date.now()}_${state.composerImageAttachments.length + 1}`;
+  setState({
+    composerImageAttachments: [...state.composerImageAttachments, { id, ...attachment }],
+  });
+  return id;
+}
+
+export function removeComposerImageAttachment(id: string) {
+  setState({
+    composerImageAttachments: state.composerImageAttachments.filter((entry) => entry.id !== id),
+  });
+}
+
+export function clearComposerImageAttachments() {
+  if (state.composerImageAttachments.length === 0) return;
+  setState({ composerImageAttachments: [] });
 }
 
 export function appendMessage(msg: TranscriptMessage) {

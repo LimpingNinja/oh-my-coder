@@ -1,5 +1,10 @@
 import { useState, useRef, useEffect } from "react";
-import { useAppState, getState } from "../state/store";
+import {
+  useAppState,
+  addComposerFileContext,
+  removeComposerFileContext,
+  removeComposerImageAttachment,
+} from "../state/store";
 import { getVSCodeAPI } from "../vscode";
 import { Composer, type ComposerHandle } from "./Composer";
 import { PillPopover } from "./PillPopover";
@@ -10,6 +15,7 @@ import { ThinkingSelector } from "./ThinkingSelector";
 interface ChatFooterProps {
   onSubmit: (content: string, behavior?: "steer" | "followUp" | "forceSend") => void;
   isStreaming?: boolean;
+  dragActive?: boolean;
 }
 
 /**
@@ -19,8 +25,8 @@ interface ChatFooterProps {
  * Zone 2: Composer (chat textarea)
  * Zone 3: Model pill · Thinking pill · Context pill · Delivery mode pill | Send/Stop
  */
-export function ChatFooter({ onSubmit, isStreaming }: ChatFooterProps) {
-  const { footerEditor, footerRuntime, header } = useAppState();
+export function ChatFooter({ onSubmit, isStreaming, dragActive = false }: ChatFooterProps) {
+  const { footerEditor, footerRuntime, header, composerFileContexts, composerImageAttachments } = useAppState();
   const composerRef = useRef<ComposerHandle>(null);
 
   const handleNewSession = () => {
@@ -31,16 +37,39 @@ export function ChatFooter({ onSubmit, isStreaming }: ChatFooterProps) {
   // Format file context display
   const fileDisplay = formatFileContext(footerEditor);
 
+  const handleAttachCurrentFile = () => {
+    if (!footerEditor.filePath) return;
+    addComposerFileContext({
+      path: footerEditor.filePath,
+      languageId: footerEditor.languageId,
+      line: footerEditor.line,
+      endLine: footerEditor.endLine,
+    });
+  };
+
   return (
-    <footer className="omp-footer" aria-label="Session controls">
+    <footer
+      className={`omp-footer${dragActive ? " omp-footer--drag-active" : ""}`}
+      aria-label="Session controls"
+    >
       {/* Zone 1: File context bar */}
       <div className="omp-footer-zone omp-footer-context">
         <div className="omp-footer-context-left">
           {fileDisplay ? (
-            <span className="omp-footer-file" title={footerEditor.filePath}>
-              {footerEditor.isDirty && <span className="omp-footer-dirty">●</span>}
-              {fileDisplay}
-            </span>
+            <button
+              type="button"
+              className="omp-footer-file-attach"
+              title={`Add ${fileDisplay} to chat context`}
+              onClick={handleAttachCurrentFile}
+            >
+              <span className="omp-footer-file-attach-icon">
+                <i className="codicon codicon-add" />
+              </span>
+              <span className="omp-footer-file" title={footerEditor.filePath}>
+                {footerEditor.isDirty && <span className="omp-footer-dirty">●</span>}
+                {fileDisplay}
+              </span>
+            </button>
           ) : (
             <span className="omp-footer-file omp-footer-file--empty">No active file</span>
           )}
@@ -57,6 +86,11 @@ export function ChatFooter({ onSubmit, isStreaming }: ChatFooterProps) {
         ref={composerRef}
         onSubmit={onSubmit}
         placeholder={isStreaming ? "Send steering or follow-up message..." : "Type a message..."}
+        fileContexts={composerFileContexts}
+        onRemoveFileContext={removeComposerFileContext}
+        imageAttachments={composerImageAttachments}
+        onRemoveImageAttachment={removeComposerImageAttachment}
+        dragActive={dragActive}
       />
 
       {/* Zone 3: Controls bar — pill badges with hover popovers */}

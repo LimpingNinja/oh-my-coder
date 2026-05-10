@@ -24,11 +24,13 @@ export async function createBridge(
   context: vscode.ExtensionContext,
   onTerminalSession?: (terminalId: string, sessionFile: string) => void,
   onGetTurnMetadata?: () => TurnMetadataSnapshot,
+  onGetUserAttachments?: () => import("./types.ts").UserAttachmentsSnapshot | null,
 ): Promise<BridgeContext> {
   const state = createBridgeState(
     captureSelection(vscode.window.activeTextEditor),
     onTerminalSession,
     onGetTurnMetadata,
+    onGetUserAttachments,
   );
   const dirtyState = new Map<string, boolean>();
   const token = randomUUID();

@@ -40,47 +40,119 @@ export function extractResultDetails(result: unknown): Record<string, unknown> |
   return null;
 }
 
-/**
- * Strip XML task-summary envelope from result text to get the readable summary.
- */
-export function stripTaskSummaryXml(text: string): string {
-  // Extract content from <result>...</result> tags
-  const resultMatch = text.match(/<result>([\s\S]*?)<\/result>/);
-  if (resultMatch) {
-    const inner = resultMatch[1]!.trim();
-    // Try to parse as JSON for clean display
-    try {
-      const parsed = JSON.parse(inner);
-      if (typeof parsed === "object" && parsed.summary) {
-        return parsed.summary;
-      }
-      return JSON.stringify(parsed, null, 2);
-    } catch {
-      return inner;
+export interface TaskResultSegment {
+  path?: string;
+  text: string;
+}
+
+export function parseTaskResultSegments(text: string): TaskResultSegment[] {
+  const decoded = decodeOuterPayload(text).trim();
+  const previewRegex = /<preview\b([^>]*)>([\s\S]*?)<\/preview>/g;
+  const previews = Array.from(decoded.matchAll(previewRegex));
+  if (previews.length > 0) {
+    const segments: TaskResultSegment[] = previews.map(match => ({
+      path: extractPreviewPath(match[1] ?? ""),
+      text: normalizeDisplayText(decodeSegmentBody(match[2]!.trim())),
+    })).filter(segment => segment.text.length > 0);
+
+    const remainder = decoded.replace(previewRegex, "").trim();
+    if (remainder) {
+      const text = normalizeDisplayText(extractTaskResultText(remainder));
+      if (text) segments.push({ text });
     }
+
+    return segments;
   }
 
-  // Strip header/agent XML tags and return readable text
-  let cleaned = text
-    .replace(/<task-summary>[\s\S]*?<\/header>/g, "")
+  return [{ text: normalizeDisplayText(extractTaskResultText(decoded)) }].filter(segment => segment.text.length > 0);
+}
+
+export function getTaskOutputPath(result: unknown, previewPath?: string): string | undefined {
+  if (previewPath && !previewPath.startsWith("agent://")) return previewPath;
+  if (!result || typeof result !== "object") return previewPath;
+
+  const details = (result as Record<string, unknown>).details;
+  if (!details || typeof details !== "object") return previewPath;
+
+  const record = details as Record<string, unknown>;
+  if (previewPath?.startsWith("agent://") && Array.isArray(record.results)) {
+    const id = previewPath.slice("agent://".length);
+    const matchingResult = (record.results as Array<Record<string, unknown>>).find(item => item.id === id);
+    if (typeof matchingResult?.outputPath === "string") return matchingResult.outputPath;
+    return undefined;
+  }
+
+  if (Array.isArray(record.outputPaths) && typeof record.outputPaths[0] === "string") return record.outputPaths[0];
+  return previewPath;
+}
+
+function decodeOuterPayload(text: string): string {
+  return decodeJsonStringOrEscapes(text);
+}
+
+function decodeSegmentBody(text: string): string {
+  return decodeJsonStringOrEscapes(text);
+}
+
+function decodeJsonStringOrEscapes(text: string): string {
+  const normalizedInput = unwrapQuotedPayload(text);
+  try {
+    const parsed = JSON.parse(normalizedInput);
+    if (typeof parsed === "string") return parsed;
+    if (parsed && typeof parsed === "object" && typeof parsed.summary === "string") return parsed.summary;
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return decodeEscapedStringText(normalizedInput);
+  }
+}
+
+function extractPreviewPath(attrs: string): string | undefined {
+  const match = attrs.match(/\bfull-path\s*=\s*("([^"]*)"|'([^']*)')/);
+  return match?.[2] ?? match?.[3];
+}
+
+function unwrapQuotedPayload(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('"') && !trimmed.endsWith('"')) return trimmed.slice(1);
+  return trimmed;
+}
+
+function extractTaskResultText(text: string): string {
+  const resultMatches = Array.from(text.matchAll(/<result>([\s\S]*?)<\/result>/g));
+  if (resultMatches.length > 0) {
+    return resultMatches.map(match => decodeSegmentBody(match[1]!.trim())).join("\n");
+  }
+
+  const cleaned = text
+    .replace(/<header>[\s\S]*?<\/header>/g, "")
+    .replace(/<task-summary>/g, "")
     .replace(/<\/task-summary>/g, "")
     .replace(/<agent[^>]*>/g, "")
     .replace(/<\/agent>/g, "")
     .replace(/<status>[^<]*<\/status>/g, "")
     .replace(/<meta[^/]*\/>/g, "")
-    .replace(/<result>/g, "")
-    .replace(/<\/result>/g, "")
     .trim();
 
-  // If what's left looks like JSON, try to extract summary
-  if (cleaned.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(cleaned);
-      if (parsed.summary) return parsed.summary;
-    } catch {}
-  }
-
   return cleaned || text;
+}
+
+function decodeEscapedStringText(text: string): string {
+  const unquoted = text.startsWith('"') && text.endsWith('"') ? text.slice(1, -1) : text;
+  return unquoted.replace(/\\(r|n|t|`|"|\\)/g, (match, ch: string) => {
+    const replacements: Record<string, string> = {
+      r: "\r",
+      n: "\n",
+      t: "\t",
+      "`": "`",
+      '"': '"',
+      "\\": "\\",
+    };
+    return replacements[ch] ?? match;
+  });
+}
+
+function normalizeDisplayText(text: string): string {
+  return text.replace(/\n{3,}/g, "\n\n");
 }
 
 /**

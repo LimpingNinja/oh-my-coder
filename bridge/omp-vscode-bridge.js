@@ -221,8 +221,27 @@ export default function (pi) {
     await reportTerminalSession(ctx);
   });
 
+  const persistUserAttachments = async () => {
+    try {
+      const attachments = await callBridge("getUserAttachments");
+      if (attachments && typeof attachments === "object") {
+        const hasData = attachments.fileContexts?.length > 0;
+        if (hasData) {
+          pi.appendEntry("user_attachments", { userAttachments: attachments });
+        }
+      }
+    } catch {
+      // Best effort — attachment persistence is non-critical
+    }
+  };
+
   pi.on("input", async (_event, ctx) => {
     void refreshStatus(ctx);
+  });
+
+  pi.on("before_agent_start", async (_event, ctx) => {
+    void refreshStatus(ctx);
+    await persistUserAttachments();
   });
 
   pi.on("agent_end", async (_event, ctx) => {

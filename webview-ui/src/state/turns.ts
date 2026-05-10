@@ -58,7 +58,7 @@ export type TurnId = string;
  * UI request turns are interactive dialogs from the runtime awaiting user response.
  */
 export type Turn =
-  | { kind: "user"; id: TurnId; timestamp: number; text: string; queuedAs?: "steer" | "followUp" }
+  | { kind: "user"; id: TurnId; timestamp: number; text: string; images?: Array<{ mimeType: string; data: string | null; blobRef?: string }>; fileContexts?: Array<{ path: string; line?: number; endLine?: number; languageId?: string }>; queuedAs?: "steer" | "followUp" }
   | { kind: "agent"; id: TurnId; timestamp: number; events: TurnEvent[]; active: boolean; metadata?: TurnMetadata }
   | { kind: "ui-request"; id: TurnId; timestamp: number; request: UiRequestData; response?: UiResponseData };
 
@@ -140,6 +140,10 @@ export interface RetryEvent {
 export interface ErrorEvent {
   kind: "error";
   message: string;
+  title?: string;
+  stopReason?: string;
+  tone?: "error" | "warning" | "cancelled";
+  raw?: unknown;
 }
 
 // ============================================================================

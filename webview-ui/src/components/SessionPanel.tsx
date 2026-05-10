@@ -12,8 +12,10 @@ interface SessionPanelProps {
  * Lists all workspace sessions with search. Clicking a session switches to it.
  */
 export function SessionPanel({ open, onClose }: SessionPanelProps) {
-  const { sessionList } = useAppState();
+  const { runtime, sessionList } = useAppState();
   const [search, setSearch] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -24,6 +26,8 @@ export function SessionPanel({ open, onClose }: SessionPanelProps) {
   useEffect(() => {
     if (open) {
       setSearch("");
+      setPendingDelete(null);
+      setDeleteError(null);
       setTimeout(() => inputRef.current?.focus(), 150);
       // Request session refresh
       const vscode = getVSCodeAPI();
@@ -41,10 +45,41 @@ export function SessionPanel({ open, onClose }: SessionPanelProps) {
     return () => window.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
+  useEffect(() => {
+    if (!open) return;
+    function handleMessage(event: MessageEvent) {
+      const msg = event.data;
+      if (!msg || msg.type !== "session.deleteResult") return;
+      if (msg.success) {
+        setPendingDelete(null);
+        setDeleteError(null);
+      } else {
+        setDeleteError(typeof msg.message === "string" ? msg.message : "Session could not be deleted.");
+      }
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [open]);
+
   function handleSelect(path: string) {
     const vscode = getVSCodeAPI();
     vscode.postMessage({ type: "session.resume", sessionPath: path });
     onClose();
+  }
+
+  function handleDeleteRequest(session: SessionSummary) {
+    setDeleteError(null);
+    setPendingDelete(session);
+  }
+
+  function handleDeleteConfirm() {
+    if (!pendingDelete) return;
+    const vscode = getVSCodeAPI();
+    vscode.postMessage({ type: "session.delete", sessionPath: pendingDelete.path });
+  }
+
+  function isActiveSession(path: string): boolean {
+    return (runtime.kind === "ready" || runtime.kind === "streaming") && runtime.sessionPath === path;
   }
 
   return (
@@ -96,6 +131,19 @@ export function SessionPanel({ open, onClose }: SessionPanelProps) {
               <div className="omp-session-panel-item-row">
                 <span className="omp-session-panel-item-title">{s.title}</span>
                 <span className="omp-session-panel-item-time">{formatRelative(s.updatedAt)}</span>
+                <button
+                  className="omp-session-panel-delete-btn"
+                  disabled={isActiveSession(s.path)}
+                  title={isActiveSession(s.path) ? "Cannot delete active session" : "Delete session"}
+                  aria-label={`Delete session ${s.title}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!isActiveSession(s.path)) handleDeleteRequest(s);
+                  }}
+                >
+                  <i className="codicon codicon-trash" />
+                </button>
               </div>
               {s.firstMessage && (
                 <div className="omp-session-panel-item-preview">
@@ -105,6 +153,25 @@ export function SessionPanel({ open, onClose }: SessionPanelProps) {
             </div>
           ))}
         </div>
+
+        {pendingDelete && (
+          <div className="omp-session-delete-overlay" role="dialog" aria-modal="true" aria-label="Delete session confirmation">
+            <div className="omp-session-delete-card">
+              <div className="omp-session-delete-icon">
+                <i className="codicon codicon-trash" />
+              </div>
+              <div className="omp-session-delete-title">Delete this session?</div>
+              <div className="omp-session-delete-message">
+                This will permanently remove <span>{pendingDelete.title}</span> from this workspace.
+              </div>
+              {deleteError && <div className="omp-session-delete-error">{deleteError}</div>}
+              <div className="omp-session-delete-actions">
+                <button className="omp-session-delete-cancel" onClick={() => setPendingDelete(null)}>Cancel</button>
+                <button className="omp-session-delete-confirm" onClick={handleDeleteConfirm}>Yes, delete</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

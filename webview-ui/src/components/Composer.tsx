@@ -1,4 +1,5 @@
-import { useRef, useCallback, useImperativeHandle, useEffect, forwardRef, type KeyboardEvent } from "react";
+import { useRef, useCallback, useImperativeHandle, useEffect, forwardRef, type ClipboardEvent, type KeyboardEvent } from "react";
+import { addComposerImageAttachment, type ComposerFileContext, type ComposerImageAttachment } from "../state/store";
 
 const MAX_HISTORY = 50;
 const historyStore: string[] = [];
@@ -26,10 +27,24 @@ interface ComposerProps {
   onSubmit: (content: string) => void;
   placeholder?: string;
   disabled?: boolean;
+  fileContexts?: ComposerFileContext[];
+  onRemoveFileContext?: (id: string) => void;
+  imageAttachments?: ComposerImageAttachment[];
+  onRemoveImageAttachment?: (id: string) => void;
+  dragActive?: boolean;
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { onSubmit, placeholder = "Type a message...", disabled },
+  {
+    onSubmit,
+    placeholder = "Type a message...",
+    disabled,
+    fileContexts = [],
+    onRemoveFileContext,
+    imageAttachments = [],
+    onRemoveImageAttachment,
+    dragActive = false,
+  },
   ref,
 ) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -139,9 +154,63 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
   }, []);
 
+  const handlePaste = useCallback(async (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const imageItems = items.filter((item) => item.type.startsWith("image/"));
+    if (imageItems.length === 0) return;
+
+    e.preventDefault();
+    const files = imageItems
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => !!file);
+    await attachImageFiles(files);
+  }, []);
+
   return (
-    <div className="omp-composer-container">
-      <div className="omp-composer">
+    <div className={`omp-composer-container${dragActive ? " omp-composer-container--drag-active" : ""}`}>
+      {(fileContexts.length > 0 || imageAttachments.length > 0) && (
+        <div className="omp-composer-context-bar" aria-label="Attached chat context">
+          {fileContexts.map((context) => (
+            <div key={context.id} className="omp-context-chip">
+              <i className="codicon codicon-file-code" />
+              <span className="omp-context-chip-text" title={context.path}>
+                {formatFileContext(context)}
+              </span>
+              <button
+                type="button"
+                className="omp-context-chip-remove"
+                onClick={() => onRemoveFileContext?.(context.id)}
+                title="Remove from chat context"
+                aria-label="Remove from chat context"
+              >
+                <i className="codicon codicon-close" />
+              </button>
+            </div>
+          ))}
+          {imageAttachments.map((attachment) => (
+            <div key={attachment.id} className="omp-context-chip omp-context-chip--image">
+              <img
+                src={`data:${attachment.mediaType};base64,${attachment.data}`}
+                alt="Pasted chat attachment"
+                className="omp-context-chip-image"
+              />
+              <span className="omp-context-chip-text">Pasted image</span>
+              <button
+                type="button"
+                className="omp-context-chip-remove"
+                onClick={() => onRemoveImageAttachment?.(attachment.id)}
+                title="Remove image attachment"
+                aria-label="Remove image attachment"
+              >
+                <i className="codicon codicon-close" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div
+        className={`omp-composer${dragActive ? " omp-composer--drag-active" : ""}`}
+      >
         <textarea
           ref={textareaRef}
           rows={1}
@@ -149,9 +218,105 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           disabled={disabled}
           onKeyDown={handleKeyDown}
           onInput={handleInput}
+          onPaste={handlePaste}
           autoFocus
         />
       </div>
     </div>
   );
 });
+
+function formatFileContext(context: ComposerFileContext): string {
+  const basename = context.path.split(/[/\\]/).pop() ?? context.path;
+  if (context.line != null && context.endLine != null && context.endLine !== context.line) {
+    return `${basename}:${context.line}-${context.endLine}`;
+  }
+  if (context.line != null) {
+    return `${basename}:${context.line}`;
+  }
+  return basename;
+}
+
+export async function attachImageFiles(files: File[]): Promise<void> {
+  for (const file of files) {
+    try {
+      const data = await readFileAsDataUrl(file);
+      const base64 = data.split(",", 2)[1] ?? "";
+      addComposerImageAttachment({
+        data: base64,
+        mediaType: file.type || guessMediaType(file.name),
+      });
+    } catch {
+      // Skip unreadable drag payloads without cancelling the rest of the batch.
+    }
+  }
+}
+
+export function collectImageFiles(dt: DataTransfer | null | undefined): File[] {
+  if (!dt) return [];
+  const seen = new Set<string>();
+  const results: File[] = [];
+
+  for (const file of Array.from(dt.files ?? [])) {
+    if (looksLikeImage(file)) {
+      const key = `${file.name}-${file.size}-${file.lastModified}`;
+      if (!seen.has(key)) { seen.add(key); results.push(file); }
+    }
+  }
+
+  for (const item of Array.from(dt.items ?? [])) {
+    if (item.kind !== "file") continue;
+    const file = item.getAsFile();
+    if (!file || !looksLikeImage(file)) continue;
+    const key = `${file.name}-${file.size}-${file.lastModified}`;
+    if (!seen.has(key)) { seen.add(key); results.push(file); }
+  }
+
+  return results;
+}
+
+export function hasFileDrag(dt: DataTransfer | null | undefined): boolean {
+  if (!dt) return false;
+  return dt.types?.includes("Files") ||
+    (dt.files && dt.files.length > 0) ||
+    (dt.items && dt.items.length > 0);
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read pasted image"));
+    reader.readAsDataURL(file);
+  });
+}
+
+const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|bmp|svg|ico|tiff?)$/i;
+
+/** Accept a file if its MIME says image, or if MIME is empty but filename looks like an image. */
+function looksLikeImage(file: File): boolean {
+  if (file.type.startsWith("image/")) return true;
+  // In VS Code webviews, file.type can be empty — fall back to extension check
+  if (!file.type && file.name && IMAGE_EXTENSIONS.test(file.name)) return true;
+  // Last resort: accept files with no type AND no name (clipboard blobs)
+  if (!file.type && !file.name) return true;
+  return false;
+}
+
+/** Guess MIME from filename when file.type is empty. */
+function guessMediaType(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase();
+  const map: Record<string, string> = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    bmp: "image/bmp",
+    svg: "image/svg+xml",
+    ico: "image/x-icon",
+    tif: "image/tiff",
+    tiff: "image/tiff",
+  };
+  return map[ext ?? ""] ?? "image/png";
+}

@@ -228,6 +228,9 @@ function handleMessageEnd(state: TranscriptState, frame: Record<string, unknown>
     streaming: false,
     finalized: true,
     finalizedAt: Date.now(),
+    stopReason: typeof messagePayload?.stopReason === "string" ? messagePayload.stopReason : msg.stopReason,
+    errorMessage: typeof messagePayload?.errorMessage === "string" ? messagePayload.errorMessage : msg.errorMessage,
+    raw: messagePayload ?? msg.raw,
   }));
 
   const finalized = newState.messages.find((m) => m.id === state.activeMessageId);

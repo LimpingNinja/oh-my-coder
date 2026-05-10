@@ -36,7 +36,7 @@ export interface OmpModelRef {
 export interface OmpImageContent {
   type: "image";
   data: string;
-  media_type: string;
+  mimeType: string;
 }
 
 /** Back-compat alias used by the controller contract in `src/rpc/types.ts`. */

@@ -81,11 +81,91 @@ body {
 .omp-link-btn.omp-small { font-size: 12px; }
 
 /* ── Composer ───────────────────────────────────────── */
-.omp-composer-container { flex-shrink: 0; padding: 8px 12px; }
+.omp-composer-container { flex-shrink: 0; padding: 8px 12px; position: relative; }
+.omp-composer-container--drag-active { background: transparent; }
+.omp-composer-context-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.omp-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 28%, var(--omp-border));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 18%, transparent) 0%,
+      color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 14%, transparent) 55%,
+      color-mix(in srgb, var(--omp-input-bg) 88%, transparent) 100%
+    );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 4%, transparent),
+    0 0 18px color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 8%, transparent);
+  border-radius: 10px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--omp-fg) 92%, white 8%);
+}
+.omp-context-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.omp-context-chip > .codicon {
+  color: color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 55%, var(--vscode-charts-blue, #4fc1ff));
+  text-shadow: 0 0 10px color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 22%, transparent);
+}
+.omp-context-chip--image {
+  padding-right: 8px;
+}
+.omp-context-chip-image {
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, white 10%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 12%, transparent);
+  flex-shrink: 0;
+}
+.omp-context-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: color-mix(in srgb, var(--omp-muted) 82%, var(--vscode-charts-purple, #c586c0));
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 999px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.omp-context-chip-remove:hover {
+  color: color-mix(in srgb, white 35%, var(--vscode-charts-blue, #4fc1ff));
+  background: color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 14%, transparent);
+}
 .omp-composer {
   display: flex; align-items: flex-end; gap: 8px;
   background: var(--omp-input-bg); border: 1px solid var(--omp-accent);
   border-radius: 6px; padding: 8px 12px;
+}
+.omp-composer--drag-active {
+  border-color: color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 65%, var(--vscode-charts-purple, #c586c0));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 18%, transparent),
+    0 0 24px color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 16%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 10%, var(--omp-input-bg)) 0%,
+      color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 8%, var(--omp-input-bg)) 100%
+    );
 }
 .omp-composer textarea {
   flex: 1; background: transparent; color: var(--omp-input-fg); border: none;
@@ -124,8 +204,125 @@ body {
 /* ── Active Screen ──────────────────────────────────── */
 .omp-active { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .omp-active-layout { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.omp-active-layout--drag-active {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 6%, transparent) 0%,
+      color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 5%, transparent) 100%
+    );
+}
+.omp-active-drop-indicator {
+  position: absolute;
+  inset: 44px 10px 10px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+  border: 1px dashed color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 72%, var(--vscode-charts-purple, #c586c0));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--omp-bg) 76%, transparent);
+  color: color-mix(in srgb, var(--omp-fg) 88%, var(--vscode-charts-blue, #4fc1ff));
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 5%, transparent),
+    0 0 32px color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 18%, transparent);
+}
 .omp-transcript { flex: 1; overflow-y: auto; padding: 12px 16px; }
 .omp-transcript-empty { margin-top: 40px; }
+.omp-assistant-activity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: min(520px, 100%);
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 24%, var(--omp-border));
+  border-radius: 12px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 9%, transparent) 0%,
+      color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 7%, transparent) 55%,
+      color-mix(in srgb, var(--omp-input-bg) 82%, transparent) 100%
+    );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 4%, transparent),
+    0 0 22px color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 8%, transparent);
+}
+.omp-activity-mark {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--omp-bg) 72%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, white 7%, transparent),
+    0 0 18px color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 18%, transparent);
+}
+.omp-activity-mark img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  opacity: 0.92;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 22%, transparent));
+}
+.omp-activity-mark-shine {
+  position: absolute;
+  inset: -40%;
+  background: linear-gradient(
+    115deg,
+    transparent 35%,
+    color-mix(in srgb, white 52%, var(--vscode-charts-blue, #4fc1ff)) 48%,
+    transparent 62%
+  );
+  opacity: 0.5;
+  transform: translateX(-70%);
+  animation: omp-logo-shine 1.8s linear infinite;
+}
+.omp-activity-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.omp-activity-title {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.omp-activity-detail {
+  color: var(--omp-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.omp-assistant-activity--tool .omp-activity-mark,
+.omp-assistant-activity--agents .omp-activity-mark {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, white 8%, transparent),
+    0 0 22px color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 24%, transparent);
+}
+@keyframes omp-logo-shine {
+  0% { transform: translateX(-70%) rotate(0deg); }
+  100% { transform: translateX(70%) rotate(0deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .omp-activity-mark-shine,
+  .omp-assistant-activity .omp-shimmer {
+    animation: none !important;
+  }
+  .omp-activity-mark-shine { opacity: 0; }
+}
 
 /* Floating scroll-to-bottom indicator */
 .omp-scroll-to-bottom {
@@ -379,6 +576,15 @@ body {
   flex-shrink: 0;
   border-top: 1px solid var(--omp-border);
   background: var(--omp-bg);
+  position: relative;
+}
+.omp-footer--drag-active {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 10%, var(--omp-bg)) 0%,
+      color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 8%, var(--omp-bg)) 100%
+    );
 }
 .omp-footer-zone { padding: 4px 12px; }
 .omp-footer-context {
@@ -406,6 +612,35 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.omp-footer-file-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.omp-footer-file-attach:hover .omp-footer-file { color: var(--omp-accent); }
+.omp-footer-file-attach-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--omp-border) 80%, transparent);
+  background: color-mix(in srgb, var(--omp-input-bg) 80%, transparent);
+  color: var(--omp-muted);
+  flex-shrink: 0;
+}
+.omp-footer-file-attach:hover .omp-footer-file-attach-icon {
+  color: var(--omp-accent);
+  border-color: color-mix(in srgb, var(--omp-accent) 45%, var(--omp-border));
 }
 .omp-footer-file--empty { color: var(--omp-muted); font-style: italic; }
 .omp-footer-dirty { color: var(--vscode-editorWarning-foreground, #cca700); margin-right: 3px; }
@@ -512,6 +747,71 @@ body {
   display: flex; align-items: center; gap: 6px; padding: 8px 10px;
   font-size: 12px; color: var(--omp-error); background: rgba(244,71,71,0.06);
   border-radius: 4px; border: 1px solid var(--omp-error);
+}
+.omp-error-block--assistant {
+  --omp-stop-tone: var(--omp-error);
+  --omp-stop-accent: var(--vscode-charts-purple, #c586c0);
+  display: block;
+  margin: 8px 0;
+  color: color-mix(in srgb, var(--omp-stop-tone) 82%, white 18%);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--omp-stop-tone) 11%, transparent) 0%,
+      color-mix(in srgb, var(--omp-stop-accent) 7%, transparent) 56%,
+      color-mix(in srgb, var(--omp-input-bg) 86%, transparent) 100%
+    );
+  border: 1px solid color-mix(in srgb, var(--omp-stop-tone) 48%, var(--omp-stop-accent));
+  border-radius: 10px;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 4%, transparent),
+    0 0 22px color-mix(in srgb, var(--omp-stop-tone) 9%, transparent);
+}
+.omp-error-block--warning {
+  --omp-stop-tone: var(--vscode-editorWarning-foreground, #cca700);
+  --omp-stop-accent: var(--vscode-charts-yellow, #cca700);
+}
+.omp-error-block--cancelled {
+  --omp-stop-tone: var(--omp-muted);
+  --omp-stop-accent: var(--vscode-charts-blue, #4fc1ff);
+}
+.omp-error-block-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.omp-error-block-copy { min-width: 0; }
+.omp-error-block-title {
+  color: color-mix(in srgb, var(--omp-stop-tone) 70%, white 30%);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+.omp-error-block-message {
+  color: color-mix(in srgb, var(--omp-fg) 86%, var(--omp-stop-tone));
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.omp-error-block-meta {
+  margin-top: 4px;
+  color: var(--omp-muted);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+}
+.omp-error-raw-toggle {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--omp-stop-tone) 24%, transparent);
+}
+.omp-error-raw-json {
+  margin: 6px 0 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: color-mix(in srgb, var(--omp-muted) 85%, white 15%);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 /* Message action bar */
@@ -876,11 +1176,27 @@ body {
 .omp-task-header-text { font-weight: 500; }
 .omp-task-count { font-size: 11px; color: var(--omp-muted); }
 .omp-task-popout { margin-left: auto; font-size: 12px; color: var(--omp-muted); opacity: 0; transition: opacity 0.15s; }
+.omp-task-popout:hover { color: var(--omp-accent); }
 .omp-task-header:hover .omp-task-popout { opacity: 1; }
 .omp-task-waiting { display: flex; align-items: center; gap: 6px; padding: 6px 4px; font-size: 12px; color: var(--omp-muted); font-style: italic; }
 .omp-task-waiting-icon { color: var(--omp-accent); }
 .omp-task-result { padding-top: 8px; border-top: 1px solid var(--omp-border); margin-top: 4px; }
-.omp-task-result-summary { font-size: 12px; line-height: 1.5; color: var(--omp-fg); white-space: pre-wrap; word-break: break-word; margin-bottom: 4px; }
+.omp-task-result-summary { font-size: 12px; line-height: 1.5; color: var(--omp-fg); word-break: break-word; margin-bottom: 4px; }
+.omp-task-output-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 8px;
+  padding: 3px 7px;
+  border: 1px solid var(--omp-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--omp-accent) 10%, transparent);
+  color: var(--omp-accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.omp-task-output-link:hover { background: color-mix(in srgb, var(--omp-accent) 18%, transparent); }
 
 /* Sub-agent rows */
 .omp-task-agents { margin-bottom: 4px; }
@@ -1438,6 +1754,34 @@ body {
   color: var(--omp-muted);
   flex-shrink: 0;
 }
+.omp-session-panel-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--omp-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  flex-shrink: 0;
+}
+.omp-session-panel-item:hover .omp-session-panel-delete-btn,
+.omp-session-panel-delete-btn:focus-visible {
+  opacity: 1;
+}
+.omp-session-panel-delete-btn:hover:not(:disabled) {
+  color: var(--vscode-errorForeground, #f48771);
+  border-color: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 45%, transparent);
+  background: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 10%, transparent);
+}
+.omp-session-panel-delete-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.25;
+}
 .omp-session-panel-item-preview {
   font-size: 12px;
   color: var(--omp-muted);
@@ -1445,6 +1789,93 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.omp-session-delete-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background:
+    radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--vscode-errorForeground, #f48771) 16%, transparent), transparent 46%),
+    color-mix(in srgb, var(--omp-bg) 82%, transparent);
+  backdrop-filter: blur(3px);
+}
+.omp-session-delete-card {
+  width: 100%;
+  max-width: 260px;
+  border: 1px solid color-mix(in srgb, var(--vscode-errorForeground, #f48771) 40%, var(--omp-border));
+  border-radius: 14px;
+  padding: 18px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--vscode-errorForeground, #f48771) 12%, var(--omp-bg)),
+    color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 8%, var(--omp-bg))
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 5%, transparent),
+    0 0 34px color-mix(in srgb, var(--vscode-errorForeground, #f48771) 20%, transparent);
+  text-align: center;
+}
+.omp-session-delete-icon {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--vscode-errorForeground, #f48771);
+  background: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 13%, transparent);
+}
+.omp-session-delete-title {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 7px;
+}
+.omp-session-delete-message {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--omp-fg) 82%, var(--omp-muted));
+  line-height: 1.45;
+}
+.omp-session-delete-message span {
+  color: var(--omp-fg);
+  font-weight: 600;
+}
+.omp-session-delete-error {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--vscode-errorForeground, #f48771);
+}
+.omp-session-delete-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.omp-session-delete-actions button {
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.omp-session-delete-cancel {
+  border: 1px solid var(--omp-border);
+  background: color-mix(in srgb, var(--omp-bg) 78%, transparent);
+  color: var(--omp-fg);
+}
+.omp-session-delete-confirm {
+  border: 1px solid color-mix(in srgb, var(--vscode-errorForeground, #f48771) 60%, transparent);
+  background: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 18%, transparent);
+  color: var(--vscode-errorForeground, #f48771);
+  font-weight: 700;
+}
+.omp-session-delete-cancel:hover,
+.omp-session-delete-confirm:hover {
+  filter: brightness(1.12);
 }
 
 /* ============================================================================

@@ -43,6 +43,12 @@ export interface TranscriptMessage {
   finalizedAt?: number;
   /** Tool calls within this assistant message. */
   toolCalls: TranscriptToolCall[];
+  /** Provider stop reason for finalized assistant messages. */
+  stopReason?: string;
+  /** Provider/runtime error message when stopReason is error. */
+  errorMessage?: string;
+  /** Raw finalized runtime message for diagnostics/details. */
+  raw?: unknown;
 }
 
 /**

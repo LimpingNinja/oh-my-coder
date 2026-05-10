@@ -5,6 +5,7 @@
 import { useEffect } from "react";
 import { getVSCodeAPI } from "../vscode";
 import {
+  addComposerFileContext,
   setSessionList,
   setSelection,
   setRuntime,
@@ -282,6 +283,24 @@ export function useMessageHandler() {
             thinkingMinLevel: msg.minLevel as string | undefined,
             thinkingMaxLevel: msg.maxLevel as string | undefined,
           });
+          break;
+        }
+
+        case "composer.addFileContext": {
+          const context = msg.context as {
+            path?: string;
+            languageId?: string;
+            line?: number;
+            endLine?: number;
+          };
+          if (context?.path) {
+            addComposerFileContext({
+              path: context.path,
+              languageId: context.languageId,
+              line: context.line,
+              endLine: context.endLine,
+            });
+          }
           break;
         }
 

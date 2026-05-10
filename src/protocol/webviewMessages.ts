@@ -35,6 +35,19 @@ export interface ChatAttachment {
   mediaType: string;
 }
 
+/** Explicit file context attached to a chat send from the composer. */
+export interface ChatFileContext {
+  path: string;
+  line?: number;
+  endLine?: number;
+  languageId?: string;
+}
+
+/** Structured composer context pushed from the extension host. */
+export interface ComposerFileContextPayload extends ChatFileContext {
+  id?: string;
+}
+
 /**
  * Per-turn metadata payload sent from extension host to webview at agent_end.
  * Mirrors the webview's TurnMetadata shape for zero-transformation attachment.
@@ -76,6 +89,8 @@ export type WebviewToExtensionMessage =
   | { type: "session.rename"; sessionPath: string; title: string }
   /** User wants to open the transcript file in a VS Code editor. */
   | { type: "session.openTranscript"; sessionPath: string }
+  /** User confirmed deletion of a session file. */
+  | { type: "session.delete"; sessionPath: string }
 
   // ── Session lifecycle ───────────────────────────────────────────────
   /** Start a brand-new session. */
@@ -98,7 +113,14 @@ export type WebviewToExtensionMessage =
 
   // ── Chat ────────────────────────────────────────────────────────────
   /** Send a user message in an active session. */
-  | { type: "chat.send"; sessionPath: string; content: string; behavior?: "steer" | "followUp" | "forceSend"; attachments?: ChatAttachment[] }
+  | {
+      type: "chat.send";
+      sessionPath: string;
+      content: string;
+      behavior?: "steer" | "followUp" | "forceSend";
+      attachments?: ChatAttachment[];
+      fileContexts?: ChatFileContext[];
+    }
   /** Abort the current turn in an active session. */
   | { type: "chat.abort"; sessionPath: string }
 
@@ -185,6 +207,8 @@ export type ExtensionToWebviewMessage =
       type: "session.launchState";
       state: OmpLaunchState;
     }
+  | { type: "session.deleteResult"; sessionPath: string; success: true }
+  | { type: "session.deleteResult"; sessionPath: string; success: false; message: string }
 
   // ── Runtime ─────────────────────────────────────────────────────────
   | { type: "runtime.state"; sessionPath?: string; state: OmpRuntimeState }
@@ -193,6 +217,7 @@ export type ExtensionToWebviewMessage =
   | { type: "runtime.frame"; sessionPath?: string; frame: OmpRpcFrameForWebview }
   /** Per-turn metadata snapshot, emitted at agent_end. Attached to the most recent agent turn. */
   | { type: "runtime.turnMetadata"; metadata: TurnMetadataPayload }
+  | { type: "composer.addFileContext"; context: ComposerFileContextPayload }
 
   // ── Chat ─────────────────────────────────────────────────────────────
   | { type: "chat.message"; sessionPath: string; message: ChatMessageForWebview }
@@ -279,6 +304,10 @@ export interface ChatMessageForWebview {
   role: "user" | "assistant" | "system" | "toolResult";
   content: string | unknown[];
   timestamp?: number;
+  /** Resolved image attachments for user turns (base64 data or null for missing). */
+  images?: Array<{ mimeType: string; data: string | null; blobRef?: string }>;
+  /** File context badges for user turns. */
+  fileContexts?: Array<{ path: string; line?: number; endLine?: number; languageId?: string }>;
   [key: string]: unknown;
 }
 
@@ -343,6 +372,7 @@ const webviewToExtensionTypes = new Set<string>([
   "session.select",
   "session.rename",
   "session.openTranscript",
+  "session.delete",
   "session.start",
   "session.resume",
   "session.switch",
@@ -361,12 +391,14 @@ const webviewToExtensionTypes = new Set<string>([
   "extensionUi.respond",
   "input.focusRequested",
   "openFile",
+  "image.open",
 ]);
 
 const extensionToWebviewTypes = new Set<string>([
   "sessions.state",
   "selection.state",
   "session.launchState",
+  "session.deleteResult",
   "runtime.state",
   "runtime.availableModels",
   "runtime.frame",

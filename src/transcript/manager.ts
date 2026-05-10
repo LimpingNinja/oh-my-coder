@@ -23,6 +23,8 @@ import type {
   OmpRpcFrameForWebview,
   TurnMetadataPayload,
 } from "../protocol/webviewMessages.ts";
+import type { UserAttachmentsPayload } from "./turnMetadataReader.ts";
+import { isBlobRef, resolveBlob } from "./blobResolver.ts";
 import type { TranscriptState, TranscriptMessage } from "./types.ts";
 import { createEmptyTranscript, generateMessageId } from "./types.ts";
 import { applyFrame, type TranscriptEffect } from "./reducer.ts";
@@ -73,12 +75,18 @@ export class TranscriptManager {
    */
   handleFrame(frame: OmpRpcFrame): void {
     const frameType = (frame as Record<string, unknown>).type as string | undefined;
-    this.log(`frame: ${frameType ?? "unknown"}`);
 
     const { state, effect } = applyFrame(this.state, frame);
     this.state = state;
 
-    if (effect.kind !== "none") {
+    // Only log meaningful lifecycle transitions, not per-chunk streaming noise.
+    const quietFrames = new Set(["message_update", "response"]);
+    const quietEffects = new Set(["text_delta", "thinking_delta"]);
+
+    if (!quietFrames.has(frameType ?? "")) {
+      this.log(`frame: ${frameType ?? "unknown"}`);
+    }
+    if (effect.kind !== "none" && !quietEffects.has(effect.kind)) {
       this.log(`effect: ${effect.kind}`);
     }
 
@@ -112,6 +120,7 @@ export class TranscriptManager {
     messages: ChatMessage[],
     turnMetadataEntries?: TurnMetadataPayload[],
     source: "jsonl" | "omp" = "omp",
+    userAttachmentsEntries?: UserAttachmentsPayload[],
   ): void {
     // Build host-side transcript state (text-only, for internal bookkeeping)
     const transcriptMessages: TranscriptMessage[] = messages
@@ -131,6 +140,9 @@ export class TranscriptManager {
           startedAt: (record.timestamp as number) ?? (record.createdAt as number) ?? Date.now(),
           finalizedAt: (record.timestamp as number) ?? (record.createdAt as number) ?? Date.now(),
           toolCalls: [],
+          stopReason: typeof record.stopReason === "string" ? record.stopReason : undefined,
+          errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+          raw: record,
         };
       });
 
@@ -141,19 +153,41 @@ export class TranscriptManager {
       agentActive: false,
     };
 
+    // Index user_attachments by both their own entry id and parent id.
+    // On the input hook, the custom entry is typically written *before* the
+    // user message, so the user message wrapper parentId points at the custom
+    // entry id rather than the other way around.
+    const attachmentsByEntryId = new Map<string, UserAttachmentsPayload>();
+    const attachmentsByParent = new Map<string, UserAttachmentsPayload>();
+    if (userAttachmentsEntries) {
+      for (const entry of userAttachmentsEntries) {
+        if (entry.entryId) {
+          attachmentsByEntryId.set(entry.entryId, entry);
+        }
+        if (entry.parentMessageId) {
+          attachmentsByParent.set(entry.parentMessageId, entry);
+        }
+      }
+    }
+
     // Push the RAW messages to the webview — preserving content block arrays
     // (toolCall, thinking, text blocks) and toolResult messages.  The webview
     // turn reducer knows how to parse these into its turn/event model.
     const webviewMessages: ChatMessageForWebview[] = messages.map((raw) => {
       const record = raw as Record<string, unknown>;
       const role = (record.role as string) ?? "assistant";
-      return {
-        id: (record.id as string) ?? (record.messageId as string) ?? generateMessageId(),
+      const id = (record.id as string) ?? (record.messageId as string) ?? generateMessageId();
+
+      const msg: ChatMessageForWebview = {
+        id,
         role: role as ChatMessageForWebview["role"],
         // Pass raw content through — array of blocks for assistant messages,
         // string or array for user/toolResult
         content: record.content as string | unknown[],
         timestamp: (record.timestamp as number) ?? (record.createdAt as number) ?? Date.now(),
+        stopReason: typeof record.stopReason === "string" ? record.stopReason : undefined,
+        errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+        raw: role === "assistant" ? record : undefined,
         // Preserve toolResult correlation fields
         ...(role === "toolResult" && {
           toolCallId: record.toolCallId,
@@ -162,6 +196,23 @@ export class TranscriptManager {
           isError: record.isError,
         }),
       };
+
+      // For user messages: resolve image blobs and attach file contexts
+      if (role === "user") {
+        const images = resolveImagesFromContent(record.content);
+        if (images.length > 0) {
+          msg.images = images;
+        }
+        const parentId = record.parentId as string | undefined;
+        const attachments =
+          (parentId ? attachmentsByEntryId.get(parentId) : undefined)
+          ?? attachmentsByParent.get(id);
+        if (attachments?.fileContexts?.length) {
+          msg.fileContexts = attachments.fileContexts;
+        }
+      }
+
+      return msg;
     });
 
     this.config.postToWebview({
@@ -180,7 +231,10 @@ export class TranscriptManager {
    * Called when a prompt is accepted by the runtime (after the prompt
    * command response). Pushes chat.message to the webview immediately.
    */
-  addUserMessage(content: string): TranscriptMessage {
+  addUserMessage(content: string, options?: {
+    images?: Array<{ mimeType: string; data: string }>;
+    fileContexts?: Array<{ path: string; line?: number; endLine?: number; languageId?: string }>;
+  }): TranscriptMessage {
     const msg: TranscriptMessage = {
       id: generateMessageId(),
       role: "user",
@@ -198,10 +252,18 @@ export class TranscriptManager {
       messages: [...this.state.messages, msg],
     };
 
+    const webviewMsg = toWebviewMessage(msg);
+    if (options?.images?.length) {
+      webviewMsg.images = options.images;
+    }
+    if (options?.fileContexts?.length) {
+      webviewMsg.fileContexts = options.fileContexts;
+    }
+
     this.config.postToWebview({
       type: "chat.message",
       sessionPath: this.state.sessionPath,
-      message: toWebviewMessage(msg),
+      message: webviewMsg,
     });
 
     return msg;
@@ -349,6 +411,9 @@ function toWebviewMessage(msg: TranscriptMessage): ChatMessageForWebview {
     streaming: msg.streaming,
     finalized: msg.finalized,
     toolCalls: msg.toolCalls.length > 0 ? msg.toolCalls : undefined,
+    stopReason: msg.stopReason,
+    errorMessage: msg.errorMessage,
+    raw: msg.raw,
   };
 }
 
@@ -483,4 +548,39 @@ function extractThinkingContent(content: unknown): string {
     }
   }
   return parts.join("\n");
+}
+
+/**
+ * Extract and resolve image blocks from user message content.
+ *
+ * Looks for `{ type: "image", data: "blob:sha256:...", media_type: "..." }`
+ * blocks and resolves blob refs to base64 data. Returns null data for
+ * inaccessible blobs (rendered as broken-image icon by webview).
+ */
+function resolveImagesFromContent(content: unknown): Array<{ mimeType: string; data: string | null; blobRef?: string }> {
+  if (!Array.isArray(content)) return [];
+
+  const images: Array<{ mimeType: string; data: string | null; blobRef?: string }> = [];
+  for (const block of content) {
+    if (block && typeof block === "object") {
+      const b = block as Record<string, unknown>;
+      if (b.type === "image") {
+        const mimeType = (b.mimeType as string) ?? (b.media_type as string) ?? "image/png";
+        const rawData = b.data as string | undefined;
+        let data: string | null = null;
+        let blobRef: string | undefined;
+        if (rawData) {
+          if (isBlobRef(rawData)) {
+            blobRef = rawData;
+            data = resolveBlob(rawData);
+          } else {
+            // Already base64
+            data = rawData;
+          }
+        }
+        images.push({ mimeType, data, blobRef });
+      }
+    }
+  }
+  return images;
 }

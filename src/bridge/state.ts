@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { BridgeState, TurnMetadataSnapshot } from "./types.ts";
+import type { BridgeState, TurnMetadataSnapshot, UserAttachmentsSnapshot } from "./types.ts";
 
 const MAX_NOTIFICATIONS = 100;
 const MAX_CODE_ACTIONS = 100;
@@ -8,6 +8,7 @@ export function createBridgeState(
   initialSelection: BridgeState["latestSelection"],
   onTerminalSession?: (terminalId: string, sessionFile: string) => void,
   onGetTurnMetadata?: () => TurnMetadataSnapshot,
+  onGetUserAttachments?: () => UserAttachmentsSnapshot | null,
 ): BridgeState {
   return {
     latestSelection: initialSelection,
@@ -34,6 +35,9 @@ export function createBridgeState(
     },
     getTurnMetadata() {
       return onGetTurnMetadata?.() ?? {};
+    },
+    getUserAttachments() {
+      return onGetUserAttachments?.() ?? null;
     },
   };
 }
