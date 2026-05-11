@@ -1,0 +1,55 @@
+# ── From .gitignore baseline ──────────────────────────────────────────────────
+
+# Dependencies
+node_modules/
+
+# Reference codebases (not part of this project)
+reference/
+
+# Build outputs are INCLUDED (they're what the extension runs)
+# dist/        ← DO NOT IGNORE — extension host bundle lives here
+# dist-webview/ ← DO NOT IGNORE — webview assets live here
+
+# Legacy webview (replaced by React build)
+webview-ui/main.js
+
+# VS Code extension packaging
+*.vsix
+
+# Project-local config (personal/machine-specific)
+.kilo/
+.omp/
+.vscode/
+AGENTS.md
+tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# ── Additional VSIX exclusions ────────────────────────────────────────────────
+
+# Source files (extension is pre-built into dist/)
+src/
+webview-ui/src/
+webview-ui/node_modules/
+*.ts
+!*.d.ts
+
+# Build tooling config
+tsconfig.json
+tsconfig.webview.json
+rolldown.config.ts
+vite.config.ts
+pnpm-lock.yaml
+
+# Git
+.git
+.gitignore
+
+# Session files
+*.jsonl
