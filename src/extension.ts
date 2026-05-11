@@ -1869,8 +1869,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Status bar item — compact, opens/focuses OMP
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.text = "$(comment-discussion) OMP";
-  statusBarItem.tooltip = "Open OMP Chat";
+  statusBarItem.text = "$(comment-discussion) OMC";
+  statusBarItem.tooltip = "Open Oh My Coder";
   statusBarItem.command = "omp.openChat";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);

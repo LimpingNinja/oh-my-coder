@@ -113,7 +113,7 @@
       "activitybar": [
         {
           "id": "omp-container",
-          "title": "OMP",
+          "title": "Oh My Coder",
           "icon": "assets/logo.svg"
         }
       ]
