@@ -9,6 +9,7 @@
   ],
   "license": "MIT",
   "publisher": "omp",
+  "icon": "assets/omc_large_icon_square_transparent.png",
   "type": "module",
   "main": "./dist/extension.cjs",
   "scripts": {
