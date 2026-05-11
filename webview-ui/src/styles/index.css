@@ -715,8 +715,11 @@ body {
   font-size: 13px; line-height: 1.5; max-width: 80%; white-space: pre-wrap; word-wrap: break-word;
 }
 .omp-user-bubble--queued {
-  background: color-mix(in srgb, var(--vscode-button-background) 60%, var(--omp-bg));
-  border: 1px solid color-mix(in srgb, var(--vscode-button-background) 40%, transparent);
+  background:
+    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--omp-accent) 20%, transparent), transparent 42%),
+    color-mix(in srgb, var(--vscode-button-background) 62%, var(--omp-bg));
+  border: 1px solid color-mix(in srgb, var(--omp-accent) 44%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--omp-accent) 12%, transparent);
   animation: omp-queued-pulse 2s ease-in-out infinite;
 }
 @keyframes omp-queued-pulse {
@@ -734,6 +737,10 @@ body {
   opacity: 0.8;
   margin-bottom: 4px;
 }
+.omp-user-bubble--queued .omp-queued-badge {
+  color: color-mix(in srgb, var(--omp-accent) 70%, white 30%);
+  opacity: 0.95;
+}
 .omp-queued-badge i { font-size: 11px; }
 .omp-agent-text {
   font-size: 13px; line-height: 1.6; padding: 0; word-wrap: break-word; overflow-wrap: break-word;
@@ -742,6 +749,38 @@ body {
 .omp-status-block {
   display: flex; align-items: center; gap: 6px; padding: 6px 0;
   font-size: 12px; color: var(--omp-muted);
+}
+.omp-status-block--compaction,
+.omp-status-block--retry {
+  --omp-state-tone: var(--omp-accent);
+  --omp-state-accent: var(--vscode-charts-purple, #c586c0);
+  position: relative;
+  margin: 6px 0;
+  padding: 7px 10px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--omp-state-tone) 38%, var(--omp-border));
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--omp-state-tone) 10%, transparent), color-mix(in srgb, var(--omp-state-accent) 7%, transparent)),
+    color-mix(in srgb, var(--omp-code-bg) 88%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 3%, transparent), 0 0 18px color-mix(in srgb, var(--omp-state-tone) 8%, transparent);
+}
+.omp-status-block--retry {
+  --omp-state-tone: var(--vscode-editorWarning-foreground, #cca700);
+  --omp-state-accent: var(--vscode-charts-purple, #c586c0);
+}
+.omp-status-block--active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 0%, color-mix(in srgb, var(--omp-state-tone) 15%, transparent) 45%, transparent 70%);
+  transform: translateX(-100%);
+  animation: omp-state-sheen 2.8s ease-in-out infinite;
+}
+.omp-status-block--done {
+  --omp-state-tone: var(--omp-success);
+  --omp-state-accent: var(--vscode-charts-blue, #4fc1ff);
 }
 .omp-error-block {
   display: flex; align-items: center; gap: 6px; padding: 8px 10px;
@@ -824,8 +863,14 @@ body {
 
 /* Response stats panel */
 .omp-msg-stats {
-  margin-top: 8px; padding: 10px 12px; background: var(--omp-code-bg);
-  border-radius: 6px; border: 1px solid var(--omp-border); font-size: 12px;
+  margin-top: 8px; padding: 10px 12px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--omp-muted) 7%, transparent), transparent 62%),
+    color-mix(in srgb, var(--omp-code-bg) 88%, transparent);
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--omp-muted) 28%, var(--omp-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 3%, transparent);
+  font-size: 12px;
 }
 .omp-msg-stats-header {
   font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
@@ -924,10 +969,41 @@ body {
 .omp-tool-label { font-weight: 600; }
 .omp-tool-filename { font-family: var(--vscode-editor-font-family, monospace); color: var(--vscode-textLink-foreground, #3794ff); font-weight: 500; position: relative; z-index: 1; }
 .omp-tool-intent { color: var(--omp-muted); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.omp-tool-running { border-color: var(--omp-accent); }
-.omp-tool-completed { border-color: var(--omp-border); }
-.omp-tool-error { border-color: var(--omp-error); }
-.omp-tool-cancelled { border-color: var(--vscode-editorWarning-foreground, #cca700); }
+.omp-tool-running,
+.omp-tool-completed,
+.omp-tool-error,
+.omp-tool-cancelled {
+  position: relative;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--omp-code-bg) 90%, transparent);
+}
+.omp-tool-running {
+  border-color: color-mix(in srgb, var(--omp-accent) 58%, var(--omp-border));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--omp-accent) 10%, transparent);
+}
+.omp-tool-running::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(180deg, var(--omp-accent), var(--vscode-charts-purple, #c586c0));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--omp-accent) 45%, transparent);
+}
+.omp-tool-completed {
+  border-color: color-mix(in srgb, var(--omp-success) 34%, var(--omp-border));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--omp-success) 7%, transparent);
+}
+.omp-tool-error {
+  border-color: color-mix(in srgb, var(--omp-error) 55%, var(--vscode-charts-purple, #c586c0));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--omp-error) 8%, transparent), color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 6%, transparent)),
+    color-mix(in srgb, var(--omp-code-bg) 90%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--omp-error) 9%, transparent);
+}
+.omp-tool-cancelled {
+  border-color: color-mix(in srgb, var(--omp-muted) 48%, var(--vscode-charts-blue, #4fc1ff));
+  background: color-mix(in srgb, var(--omp-code-bg) 86%, transparent);
+}
 .omp-tool-body { border-top: 1px solid var(--omp-border); }
 .omp-tool-result-content { padding: 0; }
 .omp-tool-result-text { margin: 0; padding: 8px 10px; font-size: 12px; color: var(--omp-muted); }
@@ -1152,10 +1228,45 @@ body {
 .omp-tool-result-vscode { padding: 6px 12px; }
 
 /* ── Task/Agent Block ──────────────────────────────── */
-.omp-task-block { margin: 6px 0; border: 1px solid var(--omp-border); border-radius: 6px; overflow: hidden; background: var(--omp-code-bg); }
-.omp-task-running { border-color: var(--omp-accent); }
-.omp-task-completed { border-color: var(--omp-success); }
-.omp-task-error { border-color: var(--omp-error); }
+.omp-task-block {
+  margin: 6px 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--omp-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--omp-code-bg) 90%, transparent);
+}
+.omp-task-running {
+  border-color: color-mix(in srgb, var(--omp-accent) 58%, var(--vscode-charts-purple, #c586c0));
+  background:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--omp-accent) 16%, transparent), transparent 36%),
+    linear-gradient(135deg, color-mix(in srgb, var(--omp-accent) 8%, transparent), color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 6%, transparent)),
+    color-mix(in srgb, var(--omp-code-bg) 90%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 4%, transparent), 0 0 24px color-mix(in srgb, var(--omp-accent) 12%, transparent);
+}
+.omp-task-running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 0%, color-mix(in srgb, var(--omp-accent) 13%, transparent) 46%, transparent 68%);
+  transform: translateX(-100%);
+  animation: omp-state-sheen 3s ease-in-out infinite;
+}
+.omp-task-completed {
+  border-color: color-mix(in srgb, var(--omp-success) 46%, var(--omp-border));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--omp-success) 9%, transparent), color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 4%, transparent)),
+    color-mix(in srgb, var(--omp-code-bg) 91%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 3%, transparent), 0 0 18px color-mix(in srgb, var(--omp-success) 8%, transparent);
+}
+.omp-task-error {
+  border-color: color-mix(in srgb, var(--omp-error) 54%, var(--vscode-charts-purple, #c586c0));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--omp-error) 11%, transparent), color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 7%, transparent)),
+    color-mix(in srgb, var(--omp-code-bg) 90%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 4%, transparent), 0 0 22px color-mix(in srgb, var(--omp-error) 10%, transparent);
+}
 .omp-task-header {
   display: flex; align-items: center; gap: 6px; padding: 8px 10px; cursor: pointer;
   background: none; border: none; width: 100%; text-align: left; font-size: 12px;
@@ -1168,11 +1279,11 @@ body {
 .omp-task-agent-type { font-weight: 600; }
 .omp-task-name { color: var(--omp-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .omp-task-running-indicator { font-size: 10px; color: var(--omp-accent); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
-.omp-task-body { border-top: 1px solid var(--omp-border); padding: 8px 10px; }
+.omp-task-body { border-top: 1px solid color-mix(in srgb, var(--omp-border) 72%, transparent); padding: 8px 10px; }
 .omp-task-context { margin-bottom: 8px; }
 .omp-task-context-label { font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--omp-muted); margin-bottom: 3px; }
 .omp-task-context-text { font-size: 12px; color: var(--omp-fg); line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
-.omp-task-result { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--omp-border); }
+.omp-task-result { margin-top: 8px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--omp-border) 72%, transparent); }
 .omp-task-header-text { font-weight: 500; }
 .omp-task-count { font-size: 11px; color: var(--omp-muted); }
 .omp-task-popout { margin-left: auto; font-size: 12px; color: var(--omp-muted); opacity: 0; transition: opacity 0.15s; }
@@ -1180,7 +1291,7 @@ body {
 .omp-task-header:hover .omp-task-popout { opacity: 1; }
 .omp-task-waiting { display: flex; align-items: center; gap: 6px; padding: 6px 4px; font-size: 12px; color: var(--omp-muted); font-style: italic; }
 .omp-task-waiting-icon { color: var(--omp-accent); }
-.omp-task-result { padding-top: 8px; border-top: 1px solid var(--omp-border); margin-top: 4px; }
+.omp-task-result { padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--omp-border) 72%, transparent); margin-top: 4px; }
 .omp-task-result-summary { font-size: 12px; line-height: 1.5; color: var(--omp-fg); word-break: break-word; margin-bottom: 4px; }
 .omp-task-output-link {
   display: inline-flex;
@@ -1200,8 +1311,31 @@ body {
 
 /* Sub-agent rows */
 .omp-task-agents { margin-bottom: 4px; }
-.omp-subagent { border-bottom: 1px solid var(--omp-border); }
+.omp-subagent { border-bottom: 1px solid color-mix(in srgb, var(--omp-border) 70%, transparent); }
 .omp-subagent:last-child { border-bottom: none; }
+.omp-subagent-running,
+.omp-subagent-completed,
+.omp-subagent-failed,
+.omp-subagent-pending {
+  margin: 2px 0;
+  border-radius: 8px;
+}
+.omp-subagent-running {
+  background: color-mix(in srgb, var(--omp-accent) 8%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--omp-accent) 72%, transparent);
+}
+.omp-subagent-completed {
+  background: color-mix(in srgb, var(--omp-success) 6%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--omp-success) 58%, transparent);
+}
+.omp-subagent-failed {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--omp-error) 10%, transparent), color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 5%, transparent));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--omp-error) 72%, transparent);
+}
+.omp-subagent-pending {
+  background: color-mix(in srgb, var(--omp-muted) 4%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--omp-muted) 34%, transparent);
+}
 .omp-subagent-header {
   display: flex; align-items: center; gap: 6px; padding: 5px 4px; cursor: pointer;
   background: none; border: none; width: 100%; text-align: left; font-size: 12px;
@@ -1235,9 +1369,26 @@ body {
 .omp-btn:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground); }
 .omp-btn:disabled { opacity: 0.4; cursor: default; }
 .omp-state-msg { text-align: center; padding: 16px 12px; color: var(--omp-muted); font-size: 12px; }
+.omp-active > .omp-state-msg,
+.omp-transcript-empty {
+  margin: 24px auto;
+  max-width: 360px;
+  border: 1px solid color-mix(in srgb, var(--omp-accent) 26%, var(--omp-border));
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--omp-accent) 14%, transparent), transparent 48%),
+    color-mix(in srgb, var(--omp-code-bg) 76%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 3%, transparent), 0 0 24px color-mix(in srgb, var(--omp-accent) 7%, transparent);
+}
 .omp-error-msg { color: var(--omp-error); font-size: 12px; padding: 8px 12px; text-align: center; }
 .omp-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--omp-border); border-top-color: var(--omp-accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes omp-state-sheen {
+  0% { transform: translateX(-100%); opacity: 0; }
+  18% { opacity: 1; }
+  56% { transform: translateX(100%); opacity: 0.9; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
 
 /* ── Shimmer animation for running tools ───────────── */
 @keyframes shimmer {
@@ -1525,7 +1676,7 @@ body {
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   z-index: 60;
-  overflow: hidden;
+  overflow: visible;
   animation: omp-popover-in 0.12s ease-out;
 }
 .omp-model-selector-search {
@@ -1534,6 +1685,8 @@ body {
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--omp-border);
+  background: var(--vscode-editorWidget-background, var(--omp-bg));
+  border-radius: 8px 8px 0 0;
 }
 .omp-model-selector-search i { color: var(--omp-muted); font-size: 14px; }
 .omp-model-selector-search input {
@@ -1550,6 +1703,8 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 4px 0;
+  background: var(--vscode-editorWidget-background, var(--omp-bg));
+  border-radius: 0 0 8px 8px;
 }
 .omp-model-selector-loading,
 .omp-model-selector-empty {
@@ -1574,8 +1729,19 @@ body {
   transition: background 0.1s;
 }
 .omp-model-selector-item:hover { background: var(--omp-list-hover); }
-.omp-model-selector-item--active { font-weight: 600; }
-.omp-model-selector-item--active:hover { background: var(--omp-list-hover); }
+.omp-model-selector-item--active {
+  position: relative;
+  font-weight: 650;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--omp-accent) 12%, transparent), transparent 72%),
+    color-mix(in srgb, var(--omp-accent) 5%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--omp-accent) 72%, var(--vscode-charts-purple, #c586c0));
+}
+.omp-model-selector-item--active:hover {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--omp-accent) 16%, transparent), transparent 72%),
+    var(--omp-list-hover);
+}
 .omp-model-selector-name {
   flex: 1;
   white-space: nowrap;
@@ -1604,6 +1770,390 @@ body {
   flex-shrink: 0;
   width: 18px;
   opacity: 0.85;
+}
+
+/* ── Model favorites star ──────────────────────────── */
+.omp-model-fav-star {
+  --omp-fav-star-core: color-mix(in srgb, var(--omp-accent) 54%, var(--vscode-charts-purple, #c586c0));
+  --omp-fav-star-aura: color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 70%, #2b1f58);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  overflow: visible;
+  transition: opacity 0.15s, transform 0.18s, background 0.2s, box-shadow 0.2s;
+}
+.omp-model-fav-star::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--omp-fav-star-core) 18%, transparent), transparent 48%),
+    radial-gradient(circle at 68% 72%, color-mix(in srgb, var(--omp-fav-star-aura) 16%, transparent), transparent 52%);
+  opacity: 0;
+  transform: scale(0.72);
+  transition: opacity 0.18s, transform 0.18s;
+}
+.omp-model-fav-star::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: inherit;
+  box-shadow:
+    0 0 12px color-mix(in srgb, var(--omp-fav-star-core) 22%, transparent),
+    0 0 22px color-mix(in srgb, var(--omp-fav-star-aura) 16%, transparent);
+  opacity: 0;
+  transition: opacity 0.18s, inset 0.18s;
+}
+.omp-model-selector-item:hover .omp-model-fav-star {
+  opacity: 0.78;
+}
+.omp-model-selector-item:hover .omp-model-fav-star:hover {
+  opacity: 1;
+  transform: translateY(-1px) scale(1.04);
+  background: color-mix(in srgb, var(--omp-fav-star-aura) 9%, transparent);
+}
+.omp-model-fav-star i {
+  position: relative;
+  z-index: 1;
+  font-size: 14px;
+  color: color-mix(in srgb, var(--omp-muted) 76%, var(--omp-fav-star-core));
+  text-shadow: 0 0 7px color-mix(in srgb, var(--omp-fav-star-aura) 16%, transparent);
+  transition: color 0.18s, filter 0.18s, transform 0.18s;
+}
+.omp-model-fav-star:hover::before {
+  opacity: 1;
+  transform: scale(1);
+}
+.omp-model-fav-star:hover::after {
+  inset: 2px;
+  opacity: 0.65;
+}
+.omp-model-fav-star:hover i {
+  color: color-mix(in srgb, var(--omp-fav-star-core) 84%, var(--omp-fav-star-aura) 16%);
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--omp-fav-star-aura) 40%, transparent));
+}
+.omp-model-fav-star--active {
+  opacity: 1 !important;
+  background:
+    radial-gradient(circle at 36% 28%, color-mix(in srgb, var(--omp-fav-star-core) 14%, transparent), transparent 50%),
+    color-mix(in srgb, var(--omp-fav-star-aura) 9%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--omp-fav-star-aura) 24%, transparent),
+    0 0 14px color-mix(in srgb, var(--omp-fav-star-core) 12%, transparent);
+}
+.omp-model-fav-star--active::before {
+  opacity: 1;
+  transform: scale(1);
+}
+.omp-model-fav-star--active::after {
+  inset: 1px;
+  opacity: 0.82;
+}
+.omp-model-fav-star--active i {
+  color: color-mix(in srgb, var(--omp-fav-star-core) 76%, #e6d7ff 24%);
+  filter:
+    drop-shadow(0 0 4px color-mix(in srgb, var(--omp-fav-star-core) 52%, transparent))
+    drop-shadow(0 0 9px color-mix(in srgb, var(--omp-fav-star-aura) 42%, transparent));
+  text-shadow:
+    0 0 6px color-mix(in srgb, var(--omp-fav-star-core) 48%, transparent),
+    0 0 14px color-mix(in srgb, var(--omp-fav-star-aura) 46%, transparent);
+}
+.omp-model-fav-star--active:hover {
+  background:
+    radial-gradient(circle at 34% 30%, color-mix(in srgb, var(--omp-fav-star-core) 18%, transparent), transparent 50%),
+    color-mix(in srgb, var(--omp-fav-star-aura) 12%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--omp-fav-star-aura) 34%, transparent),
+    0 0 18px color-mix(in srgb, var(--omp-fav-star-core) 18%, transparent),
+    0 0 28px color-mix(in srgb, var(--omp-fav-star-aura) 16%, transparent);
+}
+.omp-model-fav-star--active:hover i {
+  transform: scale(1.08);
+  filter:
+    drop-shadow(0 0 5px color-mix(in srgb, var(--omp-fav-star-core) 62%, transparent))
+    drop-shadow(0 0 13px color-mix(in srgb, var(--omp-fav-star-aura) 58%, transparent));
+}
+
+/* Favorites group separator */
+.omp-model-selector-favorites {
+  border-bottom: 1px solid color-mix(in srgb, var(--omp-accent) 22%, var(--omp-border));
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+.omp-model-selector-favorites .omp-model-selector-provider {
+  color: color-mix(in srgb, var(--omp-accent) 72%, white 28%);
+}
+
+/* ── Model preview card ─────────────────────────────── */
+.omp-model-preview-popover {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  animation: omp-popover-in 0.1s ease-out;
+}
+.omp-model-preview-popover--left {
+  transform-origin: right top;
+}
+.omp-model-preview-popover--right {
+  transform-origin: left top;
+}
+.omp-model-preview {
+  width: 100%;
+  max-height: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--omp-accent) 22%, var(--omp-border));
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--omp-accent) 10%, transparent), transparent 42%),
+    radial-gradient(circle at 100% 100%, color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 9%, transparent), transparent 42%),
+    color-mix(in srgb, var(--vscode-editorWidget-background, var(--omp-bg)) 94%, transparent);
+  box-shadow:
+    0 10px 32px rgba(0, 0, 0, 0.36),
+    0 0 26px color-mix(in srgb, var(--omp-accent) 10%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--omp-accent) 8%, transparent);
+  overflow-y: auto;
+  pointer-events: none;
+}
+.omp-model-preview--empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--omp-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.omp-model-preview-header {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.omp-model-preview-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--omp-accent) 10%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--omp-accent) 10%, transparent);
+  font-size: 18px;
+}
+.omp-model-preview-heading {
+  min-width: 0;
+  flex: 1;
+}
+.omp-model-preview-name-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.omp-model-preview-name {
+  min-width: 0;
+  color: var(--omp-fg);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.omp-model-preview-provider {
+  display: block;
+  margin-top: 2px;
+  color: var(--omp-muted);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.omp-model-preview-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--omp-accent) 14%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background, var(--omp-bg)) 84%, transparent);
+  color: var(--omp-muted);
+  font-size: 10.5px;
+}
+.omp-model-preview-current strong {
+  min-width: 0;
+  color: var(--omp-fg);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.omp-model-preview-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--omp-accent) 16%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--omp-accent) 6%, transparent);
+  color: var(--omp-muted);
+  font-size: 11px;
+}
+.omp-model-preview-tier {
+  flex-shrink: 0;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.omp-model-preview-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.omp-model-preview-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--omp-accent) 20%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--omp-accent) 8%, transparent);
+  color: color-mix(in srgb, var(--omp-accent) 70%, var(--omp-fg));
+  font-size: 10px;
+  font-weight: 600;
+}
+.omp-model-preview-pill--free {
+  border-color: color-mix(in srgb, var(--omp-success) 28%, transparent);
+  background: color-mix(in srgb, var(--omp-success) 10%, transparent);
+  color: color-mix(in srgb, var(--omp-success) 72%, white 28%);
+}
+.omp-model-preview-pill--current {
+  border-color: color-mix(in srgb, var(--omp-accent) 34%, transparent);
+  background: color-mix(in srgb, var(--omp-accent) 13%, transparent);
+  color: color-mix(in srgb, var(--omp-accent) 72%, white 28%);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--omp-accent) 12%, transparent);
+}
+.omp-model-preview-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 12px;
+  padding-top: 2px;
+}
+.omp-model-preview-note {
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 20%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 7%, transparent);
+  color: color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 62%, var(--omp-muted));
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+.omp-model-preview-label {
+  color: var(--omp-muted);
+  font-size: 11px;
+}
+.omp-model-preview-value {
+  color: var(--omp-fg);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.omp-model-preview-tier--free {
+  color: color-mix(in srgb, var(--omp-success) 78%, white 22%);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--omp-success) 24%, transparent);
+}
+.omp-model-preview-tier--economy {
+  color: color-mix(in srgb, var(--vscode-charts-cyan, #4ec9b0) 68%, var(--omp-accent));
+  text-shadow: 0 0 10px color-mix(in srgb, var(--vscode-charts-cyan, #4ec9b0) 18%, transparent);
+}
+.omp-model-preview-tier--standard {
+  color: color-mix(in srgb, var(--omp-accent) 70%, var(--vscode-charts-purple, #c586c0));
+  text-shadow: 0 0 10px color-mix(in srgb, var(--omp-accent) 22%, transparent);
+}
+.omp-model-preview-tier--premium {
+  color: color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 62%, var(--vscode-charts-yellow, #cca700));
+  text-shadow: 0 0 10px color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 20%, transparent);
+}
+.omp-model-preview-tier--flagship {
+  color: color-mix(in srgb, var(--omp-error) 70%, var(--vscode-charts-purple, #c586c0));
+  text-shadow: 0 0 12px color-mix(in srgb, var(--omp-error) 28%, transparent);
+}
+.omp-model-preview-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+}
+.omp-model-preview-meter-track {
+  position: relative;
+  height: 6px;
+  overflow: visible;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--omp-muted) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--omp-border) 65%, transparent);
+}
+.omp-model-preview-meter-fill {
+  display: block;
+  height: 100%;
+  min-width: 4px;
+  border-radius: inherit;
+  box-shadow: 0 0 12px currentColor;
+}
+.omp-model-preview-meter-dot {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.6), 0 0 1px rgba(0, 0, 0, 0.4);
+  z-index: 2;
+}
+.omp-model-preview-meter-dot-label {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 9px;
+  color: #fff;
+  opacity: 0.85;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.omp-model-preview-tier-bg--free {
+  background: linear-gradient(90deg, var(--omp-success), color-mix(in srgb, var(--omp-success) 55%, var(--vscode-charts-cyan, #4ec9b0)));
+}
+.omp-model-preview-tier-bg--economy {
+  background: linear-gradient(90deg, var(--vscode-charts-cyan, #4ec9b0), var(--omp-accent));
+}
+.omp-model-preview-tier-bg--standard {
+  background: linear-gradient(90deg, var(--omp-accent), var(--vscode-charts-purple, #c586c0));
+}
+.omp-model-preview-tier-bg--premium {
+  background: linear-gradient(90deg, var(--vscode-charts-purple, #c586c0), var(--vscode-charts-yellow, #cca700));
+}
+.omp-model-preview-tier-bg--flagship {
+  background: linear-gradient(90deg, var(--vscode-charts-purple, #c586c0), var(--omp-error));
+}
+.omp-model-preview-meter-label {
+  color: var(--omp-muted);
+  font-size: 10px;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+}
+.omp-model-preview-description {
+  margin: 0;
+  color: var(--omp-muted);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 /* ── Thinking level selector ────────────────────────── */
@@ -1887,15 +2437,22 @@ body {
 }
 
 .omp-ui-card {
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
-  border-radius: 6px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--omp-accent) 9%, transparent), color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 5%, transparent)),
+    var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid color-mix(in srgb, var(--omp-accent) 36%, var(--vscode-editorWidget-border, var(--vscode-panel-border)));
+  border-radius: 10px;
   padding: 12px;
   max-width: 480px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 3%, transparent), 0 0 20px color-mix(in srgb, var(--omp-accent) 8%, transparent);
 }
 
 .omp-turn-ui-request--answered .omp-ui-card {
   opacity: 0.75;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--omp-success) 7%, transparent), transparent 62%),
+    var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border-color: color-mix(in srgb, var(--omp-success) 26%, var(--vscode-editorWidget-border, var(--vscode-panel-border)));
 }
 
 .omp-ui-card-header {
@@ -1935,16 +2492,18 @@ body {
 .omp-ui-answer-badge {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 3px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--omp-success) 35%, transparent);
+  background: color-mix(in srgb, var(--omp-success) 14%, var(--vscode-badge-background));
+  color: color-mix(in srgb, var(--omp-success) 62%, var(--vscode-badge-foreground));
   font-size: 11px;
   font-weight: 500;
 }
 
 .omp-ui-answer-badge--cancelled {
-  background: var(--vscode-inputValidation-warningBackground, #5a4a00);
-  color: var(--vscode-inputValidation-warningForeground, #ccc);
+  border-color: color-mix(in srgb, var(--omp-muted) 42%, var(--vscode-charts-blue, #4fc1ff));
+  background: color-mix(in srgb, var(--omp-muted) 16%, transparent);
+  color: color-mix(in srgb, var(--omp-muted) 78%, white 22%);
 }
 
 .omp-ui-card-actions {
@@ -2017,6 +2576,25 @@ body {
 .omp-ui-select-option:hover {
   border-color: var(--vscode-focusBorder);
   background: var(--vscode-list-hoverBackground);
+}
+
+.omp-tool-raw-json,
+.omp-tool-details-json {
+  border: 1px solid color-mix(in srgb, var(--omp-muted) 20%, transparent);
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--omp-muted) 6%, transparent), transparent 58%),
+    color-mix(in srgb, var(--vscode-editor-background) 82%, transparent);
+  padding: 7px 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .omp-status-block--active::after,
+  .omp-task-running::after,
+  .omp-user-bubble--queued,
+  .omp-shimmer {
+    animation: none;
+  }
 }
 
 /* Input/editor fields */

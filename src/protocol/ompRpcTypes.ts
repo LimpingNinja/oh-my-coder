@@ -32,6 +32,62 @@ export interface OmpModelRef {
   id: string;
 }
 
+/** Model pricing metadata, using Kilo/models.dev-style $/1M token units. */
+export interface OmpModelCost {
+  input?: number;
+  output?: number;
+  cache_read?: number;
+  cache_write?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  cache?: {
+    read?: number;
+    write?: number;
+  };
+  context_over_200k?: {
+    input?: number;
+    output?: number;
+    cache_read?: number;
+    cache_write?: number;
+  };
+}
+
+/** Rich model metadata returned by get_available_models when the runtime exposes it. */
+export interface OmpAvailableModel extends OmpModelRef {
+  name?: string;
+  contextWindow?: number;
+  contextLength?: number;
+  reasoning?: boolean;
+  type?: string;
+  family?: string;
+  release_date?: string;
+  releaseDate?: string;
+  isFree?: boolean;
+  description?: string;
+  inputPrice?: number;
+  outputPrice?: number;
+  cacheReadsPrice?: number;
+  cacheWritesPrice?: number;
+  attachment?: boolean;
+  tool_call?: boolean;
+  temperature?: boolean;
+  thinking?: { minLevel?: string; maxLevel?: string };
+  cost?: OmpModelCost;
+  limit?: {
+    context?: number;
+    input?: number;
+    output?: number;
+  };
+  modalities?: {
+    input?: string[];
+    output?: string[];
+  };
+  options?: {
+    description?: string;
+  };
+  [key: string]: unknown;
+}
+
 /** Image content block for multimodal prompts. */
 export interface OmpImageContent {
   type: "image";
@@ -285,7 +341,7 @@ export type OmpRpcResponse =
       type: "response";
       command: "get_available_models";
       success: true;
-      data: { models: OmpModelRef[] };
+      data: { models: OmpAvailableModel[] };
     }
 
   // Thinking

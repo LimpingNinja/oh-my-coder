@@ -90,8 +90,8 @@ function UserTurn({ text, images, fileContexts, queuedAs }: {
 
 function AgentTurn({ turn }: { turn: Extract<Turn, { kind: "agent" }> }) {
   const [copied, setCopied] = useState(false);
-  const [showStats, setShowStats] = useState(false);
-  const header = useAppState().header;
+  const { header, webviewPrefs } = useAppState();
+  const [showStats, setShowStats] = useState(() => webviewPrefs.chat.responseDetailsDefaultOpen);
   const meta = turn.metadata;
 
   // For the stats panel: use frozen turn metadata when available,
@@ -256,7 +256,7 @@ function EventView({ event }: { event: TurnEvent }) {
 
     case "compaction":
       return (
-        <div className="omp-status-block">
+        <div className={`omp-status-block omp-status-block--compaction${event.active ? " omp-status-block--active" : " omp-status-block--done"}`}>
           <Icon name={event.active ? "loading~spin" : "check"} />
           <span>Compacting context{event.active ? "..." : " — done"}</span>
         </div>
@@ -264,7 +264,7 @@ function EventView({ event }: { event: TurnEvent }) {
 
     case "retry":
       return (
-        <div className="omp-status-block">
+        <div className={`omp-status-block omp-status-block--retry${event.active ? " omp-status-block--active" : " omp-status-block--done"}`}>
           <Icon name={event.active ? "loading~spin" : "check"} />
           <span>Retrying{event.active ? "..." : " — done"}</span>
         </div>

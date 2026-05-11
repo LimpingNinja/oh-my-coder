@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useAppState } from "../state/store";
+import { setHeaderDetailsOpen, setTodosExpanded, useAppState } from "../state/store";
 import { getVSCodeAPI } from "../vscode";
 import { getAssetUri } from "../utils/assets";
 import { SessionPanel } from "./SessionPanel";
@@ -26,9 +26,9 @@ function OmpLogo({ size = 20 }: { size?: number }) {
  * Row 2 (expandable): cost + context + token counts
  */
 export function ChatHeader() {
-  const { header, todos } = useAppState();
-  const [detailsOpen, setDetailsOpen] = useState(true);
-  const [todosExpanded, setTodosExpanded] = useState(false);
+  const { header, todos, webviewPrefs } = useAppState();
+  const detailsOpen = webviewPrefs.chat.headerDetailsOpen;
+  const todosExpanded = webviewPrefs.chat.todosExpanded;
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
@@ -157,7 +157,7 @@ export function ChatHeader() {
             </button>
             <button
               className="omp-icon-btn-circle"
-              onClick={() => setDetailsOpen(!detailsOpen)}
+              onClick={() => setHeaderDetailsOpen(!detailsOpen)}
               data-tip={detailsOpen ? "Hide details" : "Details"}
               aria-label="Toggle token details"
               aria-expanded={detailsOpen}

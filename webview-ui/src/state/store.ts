@@ -6,6 +6,9 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { loadWebviewPrefs, saveWebviewPrefs, type WebviewPrefs } from "./webviewPrefs";
+import type { TurnTranscriptState } from "./turns";
+import { createEmptyTurnTranscript } from "./turns";
 
 // ============================================================================
 // Types (mirroring the extension protocol, kept loose for now)
@@ -75,9 +78,6 @@ export type RuntimeState =
   | { kind: "streaming"; sessionPath: string; model?: unknown; thinking?: string }
   | { kind: "error"; message: string };
 
-import type { TurnTranscriptState } from "./turns";
-import { createEmptyTurnTranscript } from "./turns";
-
 // ============================================================================
 // Header/footer state types (mirroring host protocol)
 // ============================================================================
@@ -141,6 +141,7 @@ export interface ComposerImageAttachment {
   id: string;
   data: string;
   mediaType: string;
+  label?: string;
 }
 
 export interface TodoTask {
@@ -153,6 +154,28 @@ export interface TodoPhase {
   id: string;
   name: string;
   tasks: TodoTask[];
+}
+
+/** Flattened catalog entry from models.dev — used for best-effort pricing lookup. */
+export interface CatalogEntry {
+  qualifiedId: string;
+  provider: string;
+  modelId: string;
+  name?: string;
+  family?: string;
+  reasoning?: boolean;
+  cost?: {
+    input: number;
+    output: number;
+    cache_read?: number;
+    cache_write?: number;
+  };
+  limit?: {
+    context: number;
+    input?: number;
+    output: number;
+  };
+  isFree?: boolean;
 }
 
 // ============================================================================
@@ -172,7 +195,9 @@ interface AppState {
   footerRuntime: FooterRuntimeContext;
   composerFileContexts: ComposerFileContext[];
   composerImageAttachments: ComposerImageAttachment[];
+  webviewPrefs: WebviewPrefs;
   todos: TodoPhase[];
+  modelCatalog: CatalogEntry[];
 }
 
 const initialState: AppState = {
@@ -208,7 +233,9 @@ const initialState: AppState = {
   },
   composerFileContexts: [],
   composerImageAttachments: [],
+  webviewPrefs: loadWebviewPrefs(),
   todos: [],
+  modelCatalog: [],
 };
 
 let state: AppState = { ...initialState };
@@ -350,8 +377,41 @@ export function setFooterRuntime(footerRuntime: FooterRuntimeContext) {
   setState({ footerRuntime });
 }
 
+export function setWebviewPrefs(updater: (prefs: WebviewPrefs) => WebviewPrefs) {
+  const webviewPrefs = updater(state.webviewPrefs);
+  setState({ webviewPrefs });
+  saveWebviewPrefs(webviewPrefs);
+}
+
+export function setHeaderDetailsOpen(open: boolean) {
+  setWebviewPrefs((prefs) => ({
+    ...prefs,
+    chat: { ...prefs.chat, headerDetailsOpen: open },
+  }));
+}
+
+export function setTodosExpanded(open: boolean) {
+  setWebviewPrefs((prefs) => ({
+    ...prefs,
+    chat: { ...prefs.chat, todosExpanded: open },
+  }));
+}
+
+export function toggleFavoriteModel(modelKey: string) {
+  setWebviewPrefs((prefs) => {
+    const favorites = prefs.models.favorites.includes(modelKey)
+      ? prefs.models.favorites.filter((k) => k !== modelKey)
+      : [...prefs.models.favorites, modelKey];
+    return { ...prefs, models: { ...prefs.models, favorites } };
+  });
+}
+
 export function setTodos(todos: TodoPhase[]) {
   setState({ todos });
+}
+
+export function setModelCatalog(entries: CatalogEntry[]) {
+  setState({ modelCatalog: entries });
 }
 
 // ============================================================================

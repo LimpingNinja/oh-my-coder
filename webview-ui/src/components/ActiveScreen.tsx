@@ -74,7 +74,7 @@ export function ActiveScreen() {
 
     const files = collectImageFiles(e.dataTransfer);
     if (files.length === 0) return;
-    await attachImageFiles(files);
+    await attachImageFiles(files, { source: "drop" });
   }, [clearDragActive]);
 
   // Track user scroll position to determine if they've scrolled up

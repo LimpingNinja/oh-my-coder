@@ -19,7 +19,7 @@ import { resolveWorkspaceScope, getEffectiveWorkspaceFolder, getOmpSessionDir } 
 import type { OmpSessionListState, OmpSessionSummary } from "./session/types.ts";
 import { OmpRpcControllerImpl } from "./rpc/controller.ts";
 import type { OmpLaunchRequest } from "./rpc/types.ts";
-import type { OmpRuntimeState, OmpStatePayload } from "./protocol/ompRpcTypes.ts";
+import type { OmpAvailableModel, OmpRuntimeState, OmpStatePayload } from "./protocol/ompRpcTypes.ts";
 import {
   OmpResumePathError,
   OmpStartupError,
@@ -28,6 +28,7 @@ import {
 } from "./rpc/errors.ts";
 import { TranscriptManager } from "./transcript/manager.ts";
 import { readHydrationFromJsonl } from "./transcript/turnMetadataReader.ts";
+import { refreshCatalog, loadFromDisk, getCatalogEntries, isExpired, hasCatalog } from "./models/catalog.ts";
 
 let extensionUri: vscode.Uri;
 let outputChannel: vscode.OutputChannel;
@@ -80,7 +81,7 @@ let currentFollowUpMode: string = "one-at-a-time";
 let currentInterruptMode: string = "immediate";
 
 // Cached available models from get_available_models.
-let cachedAvailableModels: Array<Record<string, unknown>> = [];
+let cachedAvailableModels: OmpAvailableModel[] = [];
 
 // Pending extension UI requests — buffered for webview delivery and response routing.
 const pendingUiRequests = new Map<string, { request: import("./protocol/webviewMessages.ts").ExtensionUiRequestForWebview; timestamp: number }>();
@@ -120,6 +121,55 @@ async function startBridge(
     );
     return undefined;
   }
+}
+
+function normalizeAvailableModels(models: unknown): OmpAvailableModel[] {
+  if (!Array.isArray(models)) return [];
+  return models.filter((model): model is OmpAvailableModel => {
+    if (typeof model !== "object" || model === null) return false;
+    const record = model as Record<string, unknown>;
+    return typeof record.provider === "string" && typeof record.id === "string";
+  });
+}
+
+function refreshAvailableModels(source: "runtime" | "refresh" = "runtime"): void {
+  outputChannel.appendLine(`[omp] getAvailableModels (${source})`);
+  if (!rpcController?.isRunning()) {
+    postToWebview({ type: "runtime.availableModels", models: [], source, updatedAt: Date.now() });
+    return;
+  }
+
+  void rpcController
+    .send<{ models: unknown }>({ type: "get_available_models" })
+    .then((result) => {
+      cachedAvailableModels = normalizeAvailableModels(result?.models);
+      postToWebview({
+        type: "runtime.availableModels",
+        models: cachedAvailableModels,
+        source,
+        updatedAt: Date.now(),
+      });
+      pushFooterState();
+    })
+    .catch((err) => {
+      outputChannel.appendLine(`[omp] getAvailableModels failed: ${err}`);
+      postToWebview({ type: "runtime.availableModels", models: [], source, updatedAt: Date.now() });
+    });
+}
+
+/** Push the models.dev catalog to the webview. */
+function pushModelCatalog(): void {
+  const entries = getCatalogEntries();
+  if (entries.length > 0) {
+    postToWebview({ type: "runtime.modelCatalog", entries });
+  }
+}
+
+/** Refresh the models.dev catalog from network (if expired or forced) and push to webview. */
+function refreshModelCatalog(force = false): void {
+  void refreshCatalog(force, (msg) => outputChannel.appendLine(msg)).then(() => {
+    pushModelCatalog();
+  });
 }
 
 /**
@@ -267,22 +317,12 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       break;
 
     case "runtime.getAvailableModels":
-      outputChannel.appendLine("[omp] getAvailableModels");
-      if (rpcController?.isRunning()) {
-        void rpcController
-          .send<{ models: Array<Record<string, unknown>> }>({ type: "get_available_models" })
-          .then((result) => {
-            cachedAvailableModels = result?.models ?? [];
-            postToWebview({
-              type: "runtime.availableModels",
-              models: cachedAvailableModels as Array<{ provider: string; id: string }>,
-            });
-          })
-          .catch((err) => {
-            outputChannel.appendLine(`[omp] getAvailableModels failed: ${err}`);
-            postToWebview({ type: "runtime.availableModels", models: [] });
-          });
-      }
+      refreshAvailableModels("runtime");
+      break;
+
+    case "runtime.refreshModelPricing":
+      refreshAvailableModels("refresh");
+      refreshModelCatalog(true);
       break;
 
     case "runtime.setThinkingLevel":
@@ -490,6 +530,9 @@ async function launchSession(
   runId: string,
   firstPrompt: string | undefined,
 ): Promise<void> {
+  // Refresh models.dev catalog on session start (force if expired).
+  refreshModelCatalog(isExpired());
+
   // One-active-process rule: stop existing process before starting a new one.
   if (rpcController?.isRunning()) {
     outputChannel.appendLine("[omp] stopping existing session before switch");
@@ -602,14 +645,7 @@ async function launchSession(
       }).catch(() => { /* best effort */ });
 
       // Pre-fetch available models for thinking support detection
-      void rpcController
-        .send<{ models: Array<Record<string, unknown>> }>({ type: "get_available_models" })
-        .then((result) => {
-          cachedAvailableModels = result?.models ?? [];
-          // Re-push footer now that we have model capabilities
-          pushFooterState();
-        })
-        .catch(() => { /* best effort */ });
+      refreshAvailableModels("runtime");
     }
 
     // Update transcript manager's session path now that we know the real path.
@@ -1272,6 +1308,9 @@ function pushInitialState(): void {
 
   // Kick off an async session refresh to populate real data.
   refreshSessions();
+
+  // Push models.dev catalog (if loaded).
+  pushModelCatalog();
 }
 
 /**
@@ -1771,6 +1810,13 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(outputChannel);
 
   outputChannel.appendLine("[omp] activating oh-my-coder extension");
+
+  // Load models.dev catalog from disk immediately, then background-refresh if stale.
+  void loadFromDisk((msg) => outputChannel.appendLine(msg)).then(() => {
+    if (isExpired()) {
+      refreshModelCatalog(false);
+    }
+  });
 
   await startBridge(context);
   context.subscriptions.push({

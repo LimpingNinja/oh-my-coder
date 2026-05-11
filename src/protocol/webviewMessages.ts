@@ -12,7 +12,7 @@
 
 import type { OmpTodoPhase } from "./ompRpcTypes.ts";
 import type { OmpSessionListState, OmpSessionSummary } from "../session/types.ts";
-import type { OmpRuntimeState } from "./ompRpcTypes.ts";
+import type { OmpAvailableModel, OmpRuntimeState } from "./ompRpcTypes.ts";
 import type { ChatFooterItem, ChatHeaderState } from "./footerTypes.ts";
 
 // ============================================================================
@@ -139,6 +139,8 @@ export type WebviewToExtensionMessage =
   | { type: "runtime.getState" }
   /** Request available models list. */
   | { type: "runtime.getAvailableModels" }
+  /** Request a fresh available-model metadata/pricing snapshot. */
+  | { type: "runtime.refreshModelPricing" }
   /** Set queue delivery modes. */
   | { type: "runtime.setSteeringMode"; mode: "all" | "one-at-a-time" }
   | { type: "runtime.setFollowUpMode"; mode: "all" | "one-at-a-time" }
@@ -156,7 +158,9 @@ export type WebviewToExtensionMessage =
 
   // ── File operations ─────────────────────────────────────────────────
   /** Open a file in the VS Code editor. */
-  | { type: "openFile"; path: string; line?: number; endLine?: number };
+  | { type: "openFile"; path: string; line?: number; endLine?: number }
+  /** Open an image blob persisted by the runtime. */
+  | { type: "image.open"; blobRef: string };
 
 // ============================================================================
 // Extension → Webview messages
@@ -212,7 +216,8 @@ export type ExtensionToWebviewMessage =
 
   // ── Runtime ─────────────────────────────────────────────────────────
   | { type: "runtime.state"; sessionPath?: string; state: OmpRuntimeState }
-  | { type: "runtime.availableModels"; models: Array<{ provider: string; id: string; [key: string]: unknown }> }
+  | { type: "runtime.availableModels"; models: OmpAvailableModel[]; source?: "runtime" | "cache" | "refresh"; updatedAt?: number }
+  | { type: "runtime.modelCatalog"; entries: import("../models/catalog.ts").CatalogEntry[] }
   /** Forward a raw OMP RPC frame to the webview for transcript rendering. */
   | { type: "runtime.frame"; sessionPath?: string; frame: OmpRpcFrameForWebview }
   /** Per-turn metadata snapshot, emitted at agent_end. Attached to the most recent agent turn. */
@@ -385,6 +390,7 @@ const webviewToExtensionTypes = new Set<string>([
   "runtime.compact",
   "runtime.getState",
   "runtime.getAvailableModels",
+  "runtime.refreshModelPricing",
   "runtime.setSteeringMode",
   "runtime.setFollowUpMode",
   "runtime.setInterruptMode",
@@ -401,6 +407,7 @@ const extensionToWebviewTypes = new Set<string>([
   "session.deleteResult",
   "runtime.state",
   "runtime.availableModels",
+  "runtime.modelCatalog",
   "runtime.frame",
   "chat.message",
   "chat.delta",

@@ -15,6 +15,7 @@ import {
   setFooterEditor,
   setFooterRuntime,
   setTodos,
+  setModelCatalog,
   upsertMessage,
   updateMessage,
   appendMessage,
@@ -182,6 +183,13 @@ export function useMessageHandler() {
           const frame = msg.frame as { type: string; [key: string]: unknown } | undefined;
           if (!frame) break;
           handleRuntimeFrame(frame);
+          break;
+        }
+
+        case "runtime.modelCatalog": {
+          if (Array.isArray(msg.entries)) {
+            setModelCatalog(msg.entries);
+          }
           break;
         }
 

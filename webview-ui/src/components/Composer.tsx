@@ -163,7 +163,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const files = imageItems
       .map((item) => item.getAsFile())
       .filter((file): file is File => !!file);
-    await attachImageFiles(files);
+    await attachImageFiles(files, { source: "paste" });
   }, []);
 
   return (
@@ -191,10 +191,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <div key={attachment.id} className="omp-context-chip omp-context-chip--image">
               <img
                 src={`data:${attachment.mediaType};base64,${attachment.data}`}
-                alt="Pasted chat attachment"
+                alt={attachment.label ?? "Pasted chat attachment"}
                 className="omp-context-chip-image"
               />
-              <span className="omp-context-chip-text">Pasted image</span>
+              <span className="omp-context-chip-text" title={attachment.label ?? "Pasted image"}>
+                {attachment.label ?? "Pasted image"}
+              </span>
               <button
                 type="button"
                 className="omp-context-chip-remove"
@@ -237,19 +239,26 @@ function formatFileContext(context: ComposerFileContext): string {
   return basename;
 }
 
-export async function attachImageFiles(files: File[]): Promise<void> {
+export async function attachImageFiles(files: File[], options: { source?: "paste" | "drop" } = {}): Promise<void> {
   for (const file of files) {
     try {
       const data = await readFileAsDataUrl(file);
       const base64 = data.split(",", 2)[1] ?? "";
+      const label = options.source === "drop" ? formatDroppedImageLabel(file) : undefined;
       addComposerImageAttachment({
         data: base64,
         mediaType: file.type || guessMediaType(file.name),
+        ...(label ? { label } : {}),
       });
     } catch {
       // Skip unreadable drag payloads without cancelling the rest of the batch.
     }
   }
+}
+
+function formatDroppedImageLabel(file: File): string | undefined {
+  const name = file.name.trim();
+  return name.length > 0 ? name : undefined;
 }
 
 export function collectImageFiles(dt: DataTransfer | null | undefined): File[] {
