@@ -99,6 +99,13 @@ export async function handleRpc(
       return state.getTurnMetadata();
     case "getUserAttachments":
       return state.getUserAttachments();
+    case "pushCommands": {
+      const commands = params.commands;
+      if (Array.isArray(commands)) {
+        state.onCommandsDiscovered?.(commands as Array<{ name: string; description?: string; source: string; location?: string; path?: string }>);
+      }
+      return { received: true, count: Array.isArray(commands) ? commands.length : 0 };
+    }
     default:
       throw new Error(`Unknown bridge method: ${method}`);
   }

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { getVSCodeAPI } from "../vscode";
 
 const THINKING_LEVELS = [
@@ -21,6 +22,13 @@ interface ThinkingSelectorProps {
  */
 export function ThinkingSelector({ open, onClose, currentLevel }: ThinkingSelectorProps) {
   const vscode = getVSCodeAPI();
+  const firstOptionRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setTimeout(() => firstOptionRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [open]);
 
   if (!open) return null;
 
@@ -37,6 +45,7 @@ export function ThinkingSelector({ open, onClose, currentLevel }: ThinkingSelect
           const isActive = currentLevel === lvl.value;
           return (
             <button
+              ref={lvl.value === THINKING_LEVELS[0].value ? firstOptionRef : undefined}
               key={lvl.value}
               className={`omp-thinking-selector-item ${isActive ? "omp-thinking-selector-item--active" : ""}`}
               onClick={() => handleSelect(lvl.value)}

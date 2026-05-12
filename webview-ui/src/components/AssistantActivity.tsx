@@ -32,12 +32,21 @@ export function AssistantActivity({ turns, runtime }: AssistantActivityProps) {
 }
 
 function getAssistantActivity(turns: Turn[], runtime: FooterRuntimeContext): ActivityState | null {
+  if (runtime.state === "ready") return null;
+
   const active = [...turns].reverse().find((turn): turn is Extract<Turn, { kind: "agent" }> => (
     turn.kind === "agent" && turn.active
   ));
 
-  if (!active && runtime.state !== "streaming" && runtime.state !== "tool" && runtime.state !== "compacting") {
-    return null;
+  // No active agent turn → hide the indicator, unless the runtime is in a
+  // tool-execution or compaction phase that can outlive the turn bracket.
+  // "streaming" without an active turn is a stale signal — suppress it so a
+  // stuck footerRuntime.state doesn't pin the indicator after agent_end.
+  if (!active) {
+    if (runtime.state !== "tool" && runtime.state !== "compacting") {
+      return null;
+    }
+    // Fall through to allow "Running tools..." / "Compacting context..." below.
   }
 
   const events = active?.events ?? [];
@@ -71,7 +80,17 @@ function getAssistantActivity(turns: Turn[], runtime: FooterRuntimeContext): Act
     return { title: "Compacting context...", tone: "thinking" };
   }
 
-  return { title: "Thinking...", tone: "thinking" };
+  // Turn is active with no streaming and no running tools.
+  // If events already exist, we're in a gap between RPC frames (inter-message
+  // pause or post-final-message pre-agent_end window) — suppress the indicator
+  // to avoid a spurious "Thinking..." flash that confuses the user.
+  // If events is empty, the turn just began and we legitimately have nothing
+  // yet — "Thinking..." is correct.
+  if (events.length === 0) {
+    return { title: "Thinking...", tone: "thinking" };
+  }
+
+  return null;
 }
 
 function findRunningTool(events: TurnEvent[], taskOnly: boolean): ToolCallEvent | undefined {

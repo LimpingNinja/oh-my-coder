@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   useAppState,
+  getState,
   addComposerFileContext,
   removeComposerFileContext,
   removeComposerImageAttachment,
@@ -11,6 +12,7 @@ import { PillPopover } from "./PillPopover";
 import { SendButton } from "./SendButton";
 import { ModelSelector } from "./ModelSelector";
 import { ThinkingSelector } from "./ThinkingSelector";
+import { RoleSelector } from "./RoleSelector";
 
 interface ChatFooterProps {
   onSubmit: (content: string, behavior?: "steer" | "followUp" | "forceSend") => void;
@@ -26,8 +28,9 @@ interface ChatFooterProps {
  * Zone 3: Model pill · Thinking pill · Context pill · Delivery mode pill | Send/Stop
  */
 export function ChatFooter({ onSubmit, isStreaming, dragActive = false }: ChatFooterProps) {
-  const { footerEditor, footerRuntime, header, composerFileContexts, composerImageAttachments } = useAppState();
+  const { footerEditor, footerRuntime, header, composerFileContexts, composerImageAttachments, slashCatalog } = useAppState();
   const composerRef = useRef<ComposerHandle>(null);
+  const [roleSelectorOpen, setRoleSelectorOpen] = useState(false);
 
   const handleNewSession = () => {
     const vscode = getVSCodeAPI();
@@ -91,11 +94,30 @@ export function ChatFooter({ onSubmit, isStreaming, dragActive = false }: ChatFo
         imageAttachments={composerImageAttachments}
         onRemoveImageAttachment={removeComposerImageAttachment}
         dragActive={dragActive}
+        slashCatalog={slashCatalog}
       />
 
       {/* Zone 3: Controls bar — pill badges with hover popovers */}
       <div className="omp-footer-zone omp-footer-controls">
         <div className="omp-footer-controls-left">
+          {/* Role pill — always visible, shows active model role */}
+          <div style={{ position: "relative" }}>
+            <button
+              className="omp-pill omp-pill--role omp-pill--clickable"
+              title={`Model role: ${footerRuntime.activeRole ?? "default"}`}
+              onClick={() => setRoleSelectorOpen(!roleSelectorOpen)}
+            >
+              <i className="codicon codicon-person" />
+              <span>{footerRuntime.activeRole ?? "default"}</span>
+            </button>
+            <RoleSelector
+              open={roleSelectorOpen}
+              onClose={() => setRoleSelectorOpen(false)}
+              currentRole={footerRuntime.activeRole}
+              availableRoles={footerRuntime.availableRoles ?? []}
+            />
+          </div>
+
           {/* Model pill — click to open model selector */}
           <ModelPill model={footerRuntime.model} state={footerRuntime.state} />
 
@@ -246,8 +268,6 @@ function DeliveryModePill({ steeringMode, followUpMode, interruptMode }: Deliver
     vscode.postMessage({ type: "runtime.setInterruptMode", mode });
   };
 
-  // Label for the pill: show current default behavior
-  const defaultLabel = interruptMode === "immediate" ? "Steer" : "Queue";
 
   return (
     <div
@@ -255,9 +275,8 @@ function DeliveryModePill({ steeringMode, followUpMode, interruptMode }: Deliver
       onMouseEnter={showHover}
       onMouseLeave={hideHover}
     >
-      <button className="omp-pill" onClick={() => { setHovered(false); setOpen(!open); }}>
+      <button className="omp-pill" onClick={() => { setHovered(false); setOpen(!open); }} title={interruptMode === "immediate" ? "Steer" : "Queue"}>
         <i className="codicon codicon-git-compare" />
-        <span>{defaultLabel}</span>
       </button>
 
       {/* Hover popover — read-only current state */}
@@ -362,6 +381,31 @@ function DeliveryModePill({ steeringMode, followUpMode, interruptMode }: Deliver
 function ModelPill({ model, state }: { model?: string; state: string }) {
   const [selectorOpen, setSelectorOpen] = useState(false);
 
+  // Listen for ui.trigger to open model selector or cycle model via slash command
+  useEffect(() => {
+    function handleUiTrigger(e: Event) {
+      const action = (e as CustomEvent<{ action: string }>).detail?.action;
+      if (action === "openModelSelector") {
+        setSelectorOpen(true);
+      } else if (action === "cycleModel") {
+        // Cycle through favorite models
+        const { webviewPrefs, footerRuntime } = getState();
+        const favorites = webviewPrefs.models.favorites;
+        if (favorites.length === 0) return;
+        const currentModel = footerRuntime.model;
+        const currentIdx = favorites.findIndex(f => currentModel && (f === currentModel || f.includes(currentModel) || currentModel.includes(f)));
+        const nextIdx = (currentIdx + 1) % favorites.length;
+        const next = favorites[nextIdx];
+        const slash = next.indexOf("/");
+        if (slash > 0) {
+          const vscode = getVSCodeAPI();
+          vscode.postMessage({ type: "runtime.setModel", provider: next.slice(0, slash), modelId: next.slice(slash + 1) });
+        }
+      }
+    }
+    window.addEventListener("omp:uiTrigger", handleUiTrigger);
+    return () => window.removeEventListener("omp:uiTrigger", handleUiTrigger);
+  }, []);
   return (
     <div className="omp-pill-popover-wrap">
       <button className="omp-pill omp-pill--clickable" onClick={() => setSelectorOpen(!selectorOpen)}>
@@ -382,6 +426,18 @@ function ModelPill({ model, state }: { model?: string; state: string }) {
 
 function ThinkingPill({ level, supported }: { level?: string; supported: boolean }) {
   const [selectorOpen, setSelectorOpen] = useState(false);
+
+  // Listen for ui.trigger to open thinking selector via slash command
+  useEffect(() => {
+    function handleUiTrigger(e: Event) {
+      const action = (e as CustomEvent<{ action: string }>).detail?.action;
+      if (action === "openThinkingSelector") {
+        setSelectorOpen(true);
+      }
+    }
+    window.addEventListener("omp:uiTrigger", handleUiTrigger);
+    return () => window.removeEventListener("omp:uiTrigger", handleUiTrigger);
+  }, []);
 
   if (!supported) {
     return (

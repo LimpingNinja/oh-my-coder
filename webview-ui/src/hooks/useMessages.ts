@@ -16,6 +16,8 @@ import {
   setFooterRuntime,
   setTodos,
   setModelCatalog,
+  setSlashCatalog,
+  setLastSlashResult,
   upsertMessage,
   updateMessage,
   appendMessage,
@@ -279,6 +281,8 @@ export function useMessageHandler() {
             steeringMode: msg.steeringMode as "all" | "one-at-a-time" | undefined,
             followUpMode: msg.followUpMode as "all" | "one-at-a-time" | undefined,
             interruptMode: msg.interruptMode as "immediate" | "wait" | undefined,
+            activeRole: (msg as any).activeRole as string | undefined,
+            availableRoles: (msg as any).availableRoles as string[] | undefined,
           });
           break;
         }
@@ -312,6 +316,32 @@ export function useMessageHandler() {
           break;
         }
 
+        case "slash.catalog": {
+          const commands = msg.commands as import("../../../src/protocol/webviewMessages").SlashCommandForWebview[];
+          const version = msg.version as string;
+          setSlashCatalog(commands, version);
+          break;
+        }
+
+        case "slash.result": {
+          setLastSlashResult({
+            command: msg.command as string,
+            ok: msg.ok as boolean,
+            message: msg.message as string | undefined,
+          });
+          break;
+        }
+
+        case "composer.clear": {
+          window.dispatchEvent(new CustomEvent("omp:composerClear"));
+          break;
+        }
+        case "ui.trigger": {
+          // Dispatch custom event for UI components to handle
+          const action = msg.action as string;
+          window.dispatchEvent(new CustomEvent("omp:uiTrigger", { detail: { action } }));
+          break;
+        }
         case "extensionUi.request": {
           // Add as a ui-request turn in the transcript
           const request = msg.request as UiRequestData;

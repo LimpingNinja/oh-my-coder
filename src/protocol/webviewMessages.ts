@@ -63,6 +63,21 @@ export interface TurnMetadataPayload {
   durationMs?: number;
 }
 
+/** Lightweight slash command contract sent to the webview catalog UI. */
+export interface SlashCommandForWebview {
+  name: string;
+  description: string;
+  tier: 1 | 2 | 3 | 4 | 5 | 6;
+  source: "omc" | "runtime";
+  aliases?: string[];
+  acceptsArgs?: boolean;
+  argsHint?: string;
+  inlineHint?: string;
+  subcommands?: Array<{ name: string; description: string; usage?: string }>;
+  runtimeMeta?: { source?: string; location?: string; path?: string };
+  route: { kind: string; reason?: string };
+}
+
 // ============================================================================
 // Webview → Extension messages
 // ============================================================================
@@ -145,6 +160,7 @@ export type WebviewToExtensionMessage =
   | { type: "runtime.setSteeringMode"; mode: "all" | "one-at-a-time" }
   | { type: "runtime.setFollowUpMode"; mode: "all" | "one-at-a-time" }
   | { type: "runtime.setInterruptMode"; mode: "immediate" | "wait" }
+  | { type: "runtime.setRole"; role: string }
 
   // ── Extension UI response ───────────────────────────────────────────
   /** Respond to an extension UI request from the runtime.
@@ -160,7 +176,13 @@ export type WebviewToExtensionMessage =
   /** Open a file in the VS Code editor. */
   | { type: "openFile"; path: string; line?: number; endLine?: number }
   /** Open an image blob persisted by the runtime. */
-  | { type: "image.open"; blobRef: string };
+  | { type: "image.open"; blobRef: string }
+
+  // ── Slash commands ──────────────────────────────────────────────────
+  /** Execute a parsed slash command. */
+  | { type: "slash.execute"; raw: string; command: string; args: string }
+  /** Request the current slash command catalog. */
+  | { type: "slash.catalog.request" };
 
 // ============================================================================
 // Extension → Webview messages
@@ -234,7 +256,7 @@ export type ExtensionToWebviewMessage =
   | { type: "header.state"; state: ChatHeaderState }
   | { type: "header.todos"; todos: OmpTodoPhase[] }
   | { type: "footer.state"; items: ChatFooterItem[] }
-  | { type: "footer.modes"; steeringMode: string; followUpMode: string; interruptMode: string }
+  | { type: "footer.modes"; steeringMode: string; followUpMode: string; interruptMode: string; activeRole?: string; availableRoles?: string[] }
   | { type: "footer.thinkingSupport"; supported: boolean; minLevel?: string; maxLevel?: string }
 
   // ── Extension UI request ─────────────────────────────────────────────
@@ -242,6 +264,15 @@ export type ExtensionToWebviewMessage =
   | { type: "extensionUi.cancel"; targetId: string }
   | { type: "extensionUi.setEditorText"; text: string }
 
+  // ── Slash commands ──────────────────────────────────────────────────
+  /** Push the merged slash command catalog to the webview. */
+  | { type: "slash.catalog"; version: string; commands: SlashCommandForWebview[] }
+  /** Result feedback for a slash command execution. */
+  | { type: "slash.result"; command: string; ok: boolean; message?: string }
+  /** Trigger a webview UI action. */
+  | { type: "ui.trigger"; action: string }
+  /** Clear composer textarea in webview. */
+  | { type: "composer.clear" }
   // ── Error ────────────────────────────────────────────────────────────
   | {
       type: "error";
@@ -398,6 +429,9 @@ const webviewToExtensionTypes = new Set<string>([
   "input.focusRequested",
   "openFile",
   "image.open",
+  "slash.execute",
+  "runtime.setRole",
+  "slash.catalog.request",
 ]);
 
 const extensionToWebviewTypes = new Set<string>([
@@ -409,6 +443,7 @@ const extensionToWebviewTypes = new Set<string>([
   "runtime.availableModels",
   "runtime.modelCatalog",
   "runtime.frame",
+  "runtime.turnMetadata",
   "chat.message",
   "chat.delta",
   "chat.messagesLoaded",
@@ -421,5 +456,9 @@ const extensionToWebviewTypes = new Set<string>([
   "extensionUi.request",
   "extensionUi.cancel",
   "extensionUi.setEditorText",
+  "slash.catalog",
+  "slash.result",
+  "ui.trigger",
+  "composer.clear",
   "error",
 ]);

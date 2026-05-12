@@ -11,6 +11,8 @@
  * are read as fallbacks for upstream runtime compatibility.
  */
 import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
 
 export default function (pi) {
   // OMP product identity env vars are primary; PI_ prefixed vars are
@@ -216,9 +218,82 @@ export default function (pi) {
     } catch {}
   };
 
+  const pushSlashCommands = async () => {
+    const commands = [];
+
+    const parseDescription = (content) => {
+      if (!content.startsWith("---")) return content.split("\n").find(l => l.trim())?.slice(0, 80) || "";
+      const endIdx = content.indexOf("\n---", 3);
+      if (endIdx === -1) return "";
+      const frontmatter = content.slice(4, endIdx);
+      const descLine = frontmatter.split("\n").find(l => l.startsWith("description:"));
+      return descLine ? descLine.slice(12).trim() : "";
+    };
+
+    const scanCommandsDir = (dir, location) => {
+      try {
+        const entries = fs.readdirSync(dir);
+        for (const entry of entries) {
+          if (!entry.endsWith(".md")) continue;
+          const filePath = path.join(dir, entry);
+          try {
+            const content = fs.readFileSync(filePath, "utf-8");
+            commands.push({
+              name: entry.replace(/\.md$/, ""),
+              description: parseDescription(content),
+              source: "prompt",
+              location,
+              path: filePath,
+            });
+          } catch {}
+        }
+      } catch {}
+    };
+
+    const scanSkillsDir = (dir, location) => {
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          const skillFile = path.join(dir, entry.name, "SKILL.md");
+          try {
+            const content = fs.readFileSync(skillFile, "utf-8");
+            commands.push({
+              name: `skill:${entry.name}`,
+              description: parseDescription(content),
+              source: "skill",
+              location,
+              path: skillFile,
+            });
+          } catch {}
+        }
+      } catch {}
+    };
+
+    const configDir = process.env.PI_CONFIG_DIR || ".omp";
+    const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), configDir, "agent");
+    scanCommandsDir(path.join(agentDir, "commands"), "user");
+    scanSkillsDir(path.join(agentDir, "skills"), "user");
+
+    const cwd = process.cwd();
+    scanCommandsDir(path.join(cwd, ".omp", "commands"), "project");
+    scanSkillsDir(path.join(cwd, ".omp", "skills"), "project");
+
+    process.stderr.write(`[omp-bridge] Discovered ${commands.length} commands/skills\n`);
+    if (commands.length > 0) {
+      try {
+        await callBridge("pushCommands", { commands });
+        process.stderr.write(`[omp-bridge] Pushed ${commands.length} commands to VS Code\n`);
+      } catch (err) {
+        process.stderr.write(`[omp-bridge] Failed to push commands: ${err?.message || err}\n`);
+      }
+    }
+  };
+
   pi.on("session_start", async (_event, ctx) => {
     startStatusUpdates(ctx);
     await reportTerminalSession(ctx);
+    await pushSlashCommands();
   });
 
   const persistUserAttachments = async () => {

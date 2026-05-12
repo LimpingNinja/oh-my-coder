@@ -29,6 +29,10 @@ import {
 import { TranscriptManager } from "./transcript/manager.ts";
 import { readHydrationFromJsonl } from "./transcript/turnMetadataReader.ts";
 import { refreshCatalog, loadFromDisk, getCatalogEntries, isExpired, hasCatalog } from "./models/catalog.ts";
+import { parseSlashInput, mergeSlashCatalog, resolveSlashCommand } from "./slash/registry.ts";
+import { SlashDispatcher } from "./slash/dispatcher.ts";
+import type { RuntimeDiscoveredCommand, SlashCommand } from "./slash/types.ts";
+import { getOmpConfig, refreshOmpConfig } from "./config/ompConfig.ts";
 
 let extensionUri: vscode.Uri;
 let outputChannel: vscode.OutputChannel;
@@ -42,6 +46,12 @@ let chatProvider: OmpChatProvider | undefined;
 // RPC controller — owns the single active OMP process.
 let rpcController: OmpRpcControllerImpl | undefined;
 
+
+// Slash command state — merged static/runtime slash catalog and dispatcher.
+let slashCatalog: SlashCommand[] = [];
+let slashCatalogVersion = "0";
+let slashDispatcher: SlashDispatcher | undefined;
+const CURRENT_PHASE = 2;
 // Session state — tracks the current session list and selection.
 // These are owned by the extension host; the webview renders them.
 let currentSessionListState: OmpSessionListState = { kind: "loading" };
@@ -83,6 +93,11 @@ let currentInterruptMode: string = "immediate";
 // Cached available models from get_available_models.
 let cachedAvailableModels: OmpAvailableModel[] = [];
 
+// Model role cycling state (from config.yml).
+let currentModelRole: string = "default";
+let cachedModelRoles: Record<string, string> = {};
+let cachedCycleOrder: string[] = ["smol", "default", "slow"];
+
 // Pending extension UI requests — buffered for webview delivery and response routing.
 const pendingUiRequests = new Map<string, { request: import("./protocol/webviewMessages.ts").ExtensionUiRequestForWebview; timestamp: number }>();
 
@@ -111,6 +126,18 @@ async function startBridge(
       const result = pendingUserAttachments;
       pendingUserAttachments = null;
       return result;
+    }, (commands) => {
+      outputChannel.appendLine(`[omp] Bridge pushed ${commands.length} runtime commands`);
+      const runtimeCommands: RuntimeDiscoveredCommand[] = commands.map((cmd) => ({
+        name: cmd.name,
+        description: cmd.description,
+        source: (cmd.source as "extension" | "prompt" | "skill") || "prompt",
+        location: cmd.location,
+        path: cmd.path,
+      }));
+      slashCatalog = mergeSlashCatalog(runtimeCommands);
+      slashCatalogVersion = `${Date.now()}`;
+      pushSlashCatalog();
     });
     bridgeContext = bridge;
     outputChannel.appendLine(`[omp] bridge started at ${bridge.url}`);
@@ -257,9 +284,34 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       void handleSessionDelete(message.sessionPath);
       break;
 
-    case "chat.send":
+    case "chat.send": {
+      const slashParsed = parseSlashInput(message.content);
+      if (slashParsed.isSlash && slashParsed.command) {
+        outputChannel.appendLine(`[omp] chat.send intercepted as slash: /${slashParsed.command}`);
+        void handleSlashExecute({
+          type: "slash.execute",
+          raw: slashParsed.raw,
+          command: slashParsed.command,
+          args: slashParsed.args,
+        });
+        break;
+      }
       outputChannel.appendLine(`[omp] chat.send: ${message.sessionPath} (behavior: ${message.behavior ?? "auto"})`);
       handleChatSend(message.sessionPath, message.content, message.behavior, message.fileContexts, message.attachments);
+      break;
+    }
+
+    case "slash.execute":
+      void handleSlashExecute(message);
+      break;
+
+    case "slash.catalog.request":
+      void (async () => {
+        if (slashCatalog.length === 0) {
+          await refreshSlashCatalogFromRuntime();
+        }
+        pushSlashCatalog();
+      })();
       break;
 
     case "chat.abort":
@@ -408,6 +460,55 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       const line = message.line;
       outputChannel.appendLine(`[omp] openFile: ${filePath}${line ? `:${line}` : ""}`);
       handleOpenFile(filePath, line, message.endLine);
+      break;
+    }
+
+    case "runtime.setRole": {
+      const role = message.role;
+      outputChannel.appendLine(`[omp] setRole: ${role}`);
+      if (!rpcController?.isRunning()) break;
+      const modelPattern = cachedModelRoles[role];
+      if (!modelPattern) break;
+
+      // Parse "provider/modelId:thinkingLevel" pattern (same logic as cycleRoles)
+      let thinkingLevel: string | undefined;
+      let modelSpec = modelPattern;
+      const lastColon = modelSpec.lastIndexOf(":");
+      if (lastColon > 0 && modelSpec.indexOf("/") < lastColon) {
+        thinkingLevel = modelSpec.slice(lastColon + 1);
+        modelSpec = modelSpec.slice(0, lastColon);
+      }
+
+      const slash = modelSpec.indexOf("/");
+      let provider: string;
+      let modelId: string;
+      if (slash > 0) {
+        provider = modelSpec.slice(0, slash);
+        modelId = modelSpec.slice(slash + 1);
+      } else {
+        const match = cachedAvailableModels.find(m => m.id.includes(modelSpec));
+        if (!match) break;
+        provider = match.provider;
+        modelId = match.id;
+      }
+
+      void (async () => {
+        await rpcController!.send({ type: "set_model", provider, modelId });
+        if (thinkingLevel) {
+          await rpcController!.send({ type: "set_thinking_level", level: thinkingLevel } as any);
+        }
+        currentModelRole = role;
+        try {
+          const state = await rpcController!.getState();
+          currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
+          postToWebview({ type: "runtime.state", state: currentRuntimeState });
+          if (state.steeringMode) currentSteeringMode = state.steeringMode;
+          if (state.followUpMode) currentFollowUpMode = state.followUpMode;
+          if (state.interruptMode) currentInterruptMode = state.interruptMode;
+          updateHeaderFromOmpState(state);
+          pushFooterState();
+        } catch {}
+      })();
       break;
     }
 
@@ -640,13 +741,35 @@ async function launchSession(
     // Fetch full state immediately to populate context %, todos, and delivery modes
     if (rpcController?.isRunning()) {
       void rpcController.getState().then((fullState) => {
+        // Sync mode variables from runtime state
+        if (fullState.steeringMode) currentSteeringMode = fullState.steeringMode;
+        if (fullState.followUpMode) currentFollowUpMode = fullState.followUpMode;
+        if (fullState.interruptMode) currentInterruptMode = fullState.interruptMode;
+        // Detect active role from model
+        const currentModel = fullState.model as { provider?: string; id?: string } | undefined;
+        if (currentModel?.id) {
+          const modelKey = `${currentModel.provider ?? ""}/${currentModel.id}`;
+          const matchedRole = Object.entries(cachedModelRoles).find(
+            ([, pattern]) => {
+              const spec = pattern.includes(":") ? pattern.slice(0, pattern.lastIndexOf(":")) : pattern;
+              return spec === modelKey || modelKey.includes(spec) || spec.includes(currentModel.id!);
+            },
+          );
+          currentModelRole = matchedRole?.[0] ?? currentModelRole;
+        }
         updateHeaderFromOmpState(fullState);
-        pushFooterState(); // Push after modes are set from fullState
+        pushFooterState();
       }).catch(() => { /* best effort */ });
 
       // Pre-fetch available models for thinking support detection
       refreshAvailableModels("runtime");
     }
+
+    // Load model roles config for /cycle-roles
+    void refreshOmpConfig().then((config) => {
+      cachedModelRoles = config.modelRoles;
+      cachedCycleOrder = config.cycleOrder;
+    }).catch(() => { /* best effort */ });
 
     // Update transcript manager's session path now that we know the real path.
     if (transcriptManager && currentActiveSessionPath) {
@@ -901,18 +1024,48 @@ async function buildRuntimePrompt(content: string, fileContexts?: ChatFileContex
 }
 
 async function buildFileContextSection(context: ChatFileContext): Promise<string | undefined> {
+  const MAX_EMBED_BYTES = 50_000; // ~1000 lines of source code
+
   try {
     const uri = vscode.Uri.file(context.path);
     const document = await vscode.workspace.openTextDocument(uri);
-    const text = sliceContextText(document.getText(), context.line, context.endLine);
-    const range = formatContextRange(context.line, context.endLine);
+    const fullText = document.getText();
     const language = context.languageId || document.languageId || "text";
     const filename = pathBasename(context.path);
+    const range = formatContextRange(context.line, context.endLine);
+
+    // If a line range is specified, always embed the slice (user explicitly selected it)
+    if (context.line != null) {
+      const text = sliceContextText(fullText, context.line, context.endLine);
+      return [
+        `<attached-file filename="${filename}" language="${language}"${range ? ` range="${range}"` : ""}>`,
+        "```",
+        text,
+        "```",
+        `</attached-file>`,
+      ].join("\n");
+    }
+
+    // Full file: check size threshold
+    const byteSize = Buffer.byteLength(fullText, "utf-8");
+    if (byteSize > MAX_EMBED_BYTES) {
+      const lineCount = document.lineCount;
+      const sizeLabel = byteSize > 1_000_000
+        ? `${(byteSize / 1_000_000).toFixed(1)}MB`
+        : `${Math.round(byteSize / 1_000)}KB`;
+      return [
+        `<attached-file filename="${filename}" language="${language}" size="${sizeLabel}" lines="${lineCount}" reference="true">`,
+        `File too large to embed (${sizeLabel}, ${lineCount} lines).`,
+        `Available at: ${context.path}`,
+        `Use the read tool to inspect relevant sections.`,
+        `</attached-file>`,
+      ].join("\n");
+    }
 
     return [
       `<attached-file filename="${filename}" language="${language}"${range ? ` range="${range}"` : ""}>`,
       "```",
-      text,
+      fullText,
       "```",
       `</attached-file>`,
     ].join("\n");
@@ -1311,6 +1464,9 @@ function pushInitialState(): void {
 
   // Push models.dev catalog (if loaded).
   pushModelCatalog();
+
+  // Push slash command catalog.
+  pushSlashCatalog();
 }
 
 /**
@@ -1679,6 +1835,123 @@ function pushRuntimeState(): void {
   }
 }
 
+async function refreshSlashCatalogFromRuntime(): Promise<void> {
+  let runtimeCommands: RuntimeDiscoveredCommand[] = [];
+
+  if (rpcController?.isRunning()) {
+    try {
+      const result = await rpcController.send({ type: "get_commands" as any });
+      runtimeCommands =
+        typeof result === "object" &&
+        result !== null &&
+        Array.isArray((result as { commands?: unknown }).commands)
+          ? ((result as { commands: RuntimeDiscoveredCommand[] }).commands ?? [])
+          : [];
+    } catch (error) {
+      outputChannel.appendLine(
+        `[omp] slash catalog runtime refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  slashCatalog = mergeSlashCatalog(runtimeCommands);
+  slashCatalogVersion = `${Date.now()}`;
+  pushSlashCatalog();
+
+}
+function pushSlashCatalog(): void {
+  const visibleCommands = slashCatalog.filter((cmd) => cmd.phase <= CURRENT_PHASE || cmd.source === "runtime");
+  postToWebview({
+    type: "slash.catalog",
+    version: slashCatalogVersion,
+    commands: visibleCommands.map((cmd) => ({
+      name: cmd.name,
+      description: cmd.description,
+      tier: cmd.tier,
+      source: cmd.source,
+      aliases: cmd.aliases,
+      acceptsArgs: cmd.acceptsArgs,
+      argsHint: cmd.argsHint,
+      inlineHint: cmd.argsHint,
+      runtimeMeta: cmd.runtimeMeta,
+      route: {
+        kind: cmd.route.kind,
+        reason: cmd.route.kind === "blocked" ? cmd.route.reason : undefined,
+      },
+    })),
+  });
+}
+
+async function handleSlashExecute(
+  message: Extract<WebviewToExtensionMessage, { type: "slash.execute" }>,
+): Promise<void> {
+  if (!slashDispatcher) {
+    postToWebview({
+      type: "slash.result",
+      command: message.command,
+      ok: false,
+      message: "Slash dispatcher unavailable.",
+    });
+    return;
+  }
+
+  const parsed = parseSlashInput(message.raw);
+  const commandName = parsed.command || message.command;
+  const args = parsed.isSlash ? parsed.args : message.args; 
+  const resolved = resolveSlashCommand(slashCatalog, commandName, args);
+  if (resolved && resolved.phase > CURRENT_PHASE && resolved.source !== "runtime") {
+    postToWebview({
+      type: "slash.result",
+      command: resolved.name,
+      ok: false,
+      message: "This command is not yet available in the current version",
+    });
+    return;
+  }
+  const command = resolved ?? {
+    name: commandName,
+    description: "Runtime pass-through",
+    tier: 4,
+    source: "runtime",
+    route: { kind: "passThrough" as const },
+    acceptsArgs: true,
+    phase: 1,
+  };
+
+  const result = await slashDispatcher.execute(command, args, message.raw);
+
+  if (result.ok && command.route.kind === "rpc" && rpcController?.isRunning()) {
+    try {
+      const state = await rpcController.getState();
+      currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
+      postToWebview({ type: "runtime.state", state: currentRuntimeState });
+      if (state.steeringMode) currentSteeringMode = state.steeringMode;
+      if (state.followUpMode) currentFollowUpMode = state.followUpMode;
+      if (state.interruptMode) currentInterruptMode = state.interruptMode;
+      // Detect active role from model
+      const currentModel = state.model as { provider?: string; id?: string } | undefined;
+      if (currentModel?.id) {
+        const modelKey = `${currentModel.provider ?? ""}/${currentModel.id}`;
+        const matchedRole = Object.entries(cachedModelRoles).find(
+          ([, pattern]) => pattern === modelKey || modelKey.includes(pattern) || pattern.includes(currentModel.id!),
+        );
+        currentModelRole = matchedRole?.[0] ?? currentModelRole;
+      }
+      updateHeaderFromOmpState(state);
+      pushFooterState();
+    } catch {
+      // State refresh failed — non-critical, UI will catch up
+    }
+  }
+
+  postToWebview({
+    type: "slash.result",
+    command: result.command,
+    ok: result.ok,
+    message: result.message,
+  });
+}
+
 /**
  * Post a typed message to the webview.
  *
@@ -1770,6 +2043,8 @@ function pushFooterState(): void {
     steeringMode: currentSteeringMode,
     followUpMode: currentFollowUpMode,
     interruptMode: currentInterruptMode,
+    activeRole: currentModelRole,
+    availableRoles: Object.keys(cachedModelRoles),
   } as ExtensionToWebviewMessage);
 
   // Determine thinking support from cached model list
@@ -1861,6 +2136,63 @@ export async function activate(context: vscode.ExtensionContext) {
         outputChannel.show(true);
       },
     ],
+    [
+      "omp.cycleRoles",
+      async () => {
+        if (!rpcController?.isRunning()) return;
+        const roles = cachedCycleOrder.filter(role => cachedModelRoles[role]);
+        if (roles.length === 0) return;
+
+        // Find current role index
+        let currentIdx = currentModelRole ? roles.indexOf(currentModelRole) : -1;
+        const nextIdx = (currentIdx + 1) % roles.length;
+        const nextRole = roles[nextIdx]!;
+        const nextModelPattern = cachedModelRoles[nextRole];
+        if (!nextModelPattern) return;
+
+        // Parse "provider/modelId:thinkingLevel" pattern
+        // The colon-suffix is a thinking level (e.g., ":medium", ":low", ":off")
+        let thinkingLevel: string | undefined;
+        let modelSpec = nextModelPattern;
+        const lastColon = modelSpec.lastIndexOf(":");
+        if (lastColon > 0 && modelSpec.indexOf("/") < lastColon) {
+          // Colon exists after the provider/model slash — it's a thinking level
+          thinkingLevel = modelSpec.slice(lastColon + 1);
+          modelSpec = modelSpec.slice(0, lastColon);
+        }
+
+        const slash = modelSpec.indexOf("/");
+        let provider: string;
+        let modelId: string;
+        if (slash > 0) {
+          provider = modelSpec.slice(0, slash);
+          modelId = modelSpec.slice(slash + 1);
+        } else {
+          const match = cachedAvailableModels.find(m => m.id.includes(modelSpec));
+          if (!match) return;
+          provider = match.provider;
+          modelId = match.id;
+        }
+
+        await rpcController.send({ type: "set_model", provider, modelId });
+        if (thinkingLevel) {
+          await rpcController.send({ type: "set_thinking_level", level: thinkingLevel } as any);
+        }
+        currentModelRole = nextRole;
+
+        // Refresh UI state
+        try {
+          const state = await rpcController.getState();
+          currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
+          postToWebview({ type: "runtime.state", state: currentRuntimeState });
+          updateHeaderFromOmpState(state);
+          pushFooterState();
+        } catch {
+          // Best effort — push footer anyway to reflect role change
+          pushFooterState();
+        }
+      },
+    ],
   ];
 
   for (const [id, handler] of commands) {
@@ -1887,6 +2219,27 @@ export async function activate(context: vscode.ExtensionContext) {
       chatProvider = undefined;
     },
   });
+
+  slashDispatcher = new SlashDispatcher({
+    rpc: {
+      send: async (command: Record<string, unknown>) => {
+        if (!rpcController?.isRunning()) return undefined;
+        return rpcController.send(command as any);
+      },
+      prompt: async (text: string) => {
+        if (!rpcController?.isRunning()) return;
+        await rpcController.prompt({ message: text });
+      },
+    },
+    isConnected: () => !!rpcController?.isRunning(),
+    executeVscodeCommand: vscode.commands.executeCommand,
+    postToWebview: (message: unknown) => postToWebview(message as ExtensionToWebviewMessage),
+    openSettingsPanel: (_tab) => {
+      outputChannel.appendLine("[omp] slash settings panel route not implemented yet");
+    },
+    openHelpUrl: "https://github.com/anthropics/oh-my-coder",
+  });
+  void refreshSlashCatalogFromRuntime();
 
   // ── Editor context listeners for footer ────────────────────────────────
   // Track active editor and selection to push file context to the webview footer.

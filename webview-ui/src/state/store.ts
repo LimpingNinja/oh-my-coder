@@ -8,6 +8,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { loadWebviewPrefs, saveWebviewPrefs, type WebviewPrefs } from "./webviewPrefs";
 import type { TurnTranscriptState } from "./turns";
+import type { SlashCommandForWebview } from "../../../src/protocol/webviewMessages";
 import { createEmptyTurnTranscript } from "./turns";
 
 // ============================================================================
@@ -127,6 +128,8 @@ export interface FooterRuntimeContext {
   steeringMode?: "all" | "one-at-a-time";
   followUpMode?: "all" | "one-at-a-time";
   interruptMode?: "immediate" | "wait";
+  activeRole?: string;
+  availableRoles?: string[];
 }
 
 export interface ComposerFileContext {
@@ -198,8 +201,11 @@ interface AppState {
   webviewPrefs: WebviewPrefs;
   todos: TodoPhase[];
   modelCatalog: CatalogEntry[];
-}
+  slashCatalog: import("../../../src/protocol/webviewMessages").SlashCommandForWebview[];
+  slashCatalogVersion: string;
+  lastSlashResult?: { command: string; ok: boolean; message?: string; timestamp: number };
 
+}
 const initialState: AppState = {
   screen: "home",
   sessionList: { kind: "loading" },
@@ -236,8 +242,11 @@ const initialState: AppState = {
   webviewPrefs: loadWebviewPrefs(),
   todos: [],
   modelCatalog: [],
-};
+  slashCatalog: [],
+  slashCatalogVersion: "0",
+  lastSlashResult: undefined,
 
+};
 let state: AppState = { ...initialState };
 const listeners = new Set<() => void>();
 
@@ -412,6 +421,14 @@ export function setTodos(todos: TodoPhase[]) {
 
 export function setModelCatalog(entries: CatalogEntry[]) {
   setState({ modelCatalog: entries });
+}
+
+export function setSlashCatalog(commands: SlashCommandForWebview[], version: string) {
+  setState({ slashCatalog: commands, slashCatalogVersion: version });
+}
+
+export function setLastSlashResult(result: { command: string; ok: boolean; message?: string }) {
+  setState({ lastSlashResult: { ...result, timestamp: Date.now() } });
 }
 
 // ============================================================================

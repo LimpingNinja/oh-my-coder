@@ -90,4 +90,5 @@ export interface BridgeState {
   reportTerminalSession(terminalId: string, sessionFile: string): void;
   getTurnMetadata(): TurnMetadataSnapshot;
   getUserAttachments(): UserAttachmentsSnapshot | null;
+  onCommandsDiscovered?: (commands: Array<{ name: string; description?: string; source: string; location?: string; path?: string }>) => void;
 }

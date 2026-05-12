@@ -1,5 +1,8 @@
-import { useRef, useCallback, useImperativeHandle, useEffect, forwardRef, type ClipboardEvent, type KeyboardEvent } from "react";
-import { addComposerImageAttachment, type ComposerFileContext, type ComposerImageAttachment } from "../state/store";
+import { useRef, useCallback, useImperativeHandle, useEffect, forwardRef, useState, useMemo, type ClipboardEvent, type KeyboardEvent } from "react";
+import { addComposerImageAttachment, useAppStateSlice, type ComposerFileContext, type ComposerImageAttachment } from "../state/store";
+import { SlashCommandMenu } from "./SlashCommandMenu";
+import type { SlashCommandForWebview } from "../../../src/protocol/webviewMessages";
+import { getVSCodeAPI } from "../vscode";
 
 const MAX_HISTORY = 50;
 const historyStore: string[] = [];
@@ -32,18 +35,20 @@ interface ComposerProps {
   imageAttachments?: ComposerImageAttachment[];
   onRemoveImageAttachment?: (id: string) => void;
   dragActive?: boolean;
+  slashCatalog?: SlashCommandForWebview[];
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   {
     onSubmit,
-    placeholder = "Type a message...",
+    placeholder = "Send a message or type / for commands",
     disabled,
     fileContexts = [],
     onRemoveFileContext,
     imageAttachments = [],
     onRemoveImageAttachment,
     dragActive = false,
+    slashCatalog = [],
   },
   ref,
 ) {
@@ -51,6 +56,33 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const historyIndex = useRef(-1);
   const draft = useRef("");
 
+  const [slashVisible, setSlashVisible] = useState(false);
+  const [slashQuery, setSlashQuery] = useState("");
+  const [slashMenuIndex, setSlashMenuIndex] = useState(0);
+  const [isComposing, setIsComposing] = useState(false);
+
+  const lastSlashResult = useAppStateSlice((s) => s.lastSlashResult);
+  const [visibleResult, setVisibleResult] = useState<{ command: string; ok: boolean; message?: string } | null>(null);
+  const slashItems = useMemo(() => {
+    if (!slashCatalog || slashCatalog.length === 0) return [];
+    const q = slashQuery.toLowerCase();
+    if (!q) return slashCatalog.slice(0, 20);
+    return slashCatalog
+      .filter((cmd) => cmd.name.includes(q) || cmd.description.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const aStarts = a.name.startsWith(q) ? 0 : 1;
+        const bStarts = b.name.startsWith(q) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 20);
+  }, [slashCatalog, slashQuery]);
+  useEffect(() => {
+    if (!lastSlashResult) return;
+    setVisibleResult(lastSlashResult);
+    const timer = setTimeout(() => setVisibleResult(null), 3000);
+    return () => clearTimeout(timer);
+  }, [lastSlashResult?.timestamp]);
   const consumeValue = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return "";
@@ -82,7 +114,44 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     window.addEventListener("omp:setEditorText", handleSetText);
     return () => window.removeEventListener("omp:setEditorText", handleSetText);
   }, [setValue]);
+  useEffect(() => {
+    function handleComposerClear() {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.value = "";
+      textarea.style.height = "auto";
+    }
+    window.addEventListener("omp:composerClear", handleComposerClear);
+    return () => window.removeEventListener("omp:composerClear", handleComposerClear);
+  }, []);
 
+  useEffect(() => {
+    function handleUiTrigger(e: Event) {
+      const action = (e as CustomEvent<{ action?: string }>).detail?.action;
+      if (action === "focusInput") {
+        textareaRef.current?.focus();
+      } else if (action === "openModelSelector" || action === "openThinkingSelector") {
+        textareaRef.current?.blur();
+      }
+    }
+    window.addEventListener("omp:uiTrigger", handleUiTrigger);
+    return () => window.removeEventListener("omp:uiTrigger", handleUiTrigger);
+  }, []);
+
+  const updateSlashState = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const val = textarea.value;
+    const slashMatch = !isComposing ? val.match(/^\/+([^\s/]*)\s*$/) : null;
+    if (slashMatch) {
+      setSlashVisible(true);
+      setSlashQuery((slashMatch[1] ?? "").replace(/^\/+/, ""));
+      return;
+    }
+    setSlashVisible(false);
+    setSlashQuery("");
+    setSlashMenuIndex(0);
+  }, [isComposing]);
   const handleSubmit = useCallback(() => {
     if (disabled) return;
     const content = consumeValue();
@@ -97,14 +166,66 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }, [onSubmit, disabled, consumeValue]);
 
+  const handleSlashSelect = useCallback((command: SlashCommandForWebview) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    if (command.route.kind === "blocked") {
+      getVSCodeAPI().postMessage({ type: "slash.execute", raw: "/" + command.name, command: command.name, args: "" });
+      textarea.value = "";
+      textarea.style.height = "auto";
+      setSlashVisible(false);
+      setSlashMenuIndex(0);
+      return;
+    }
+
+    if (command.acceptsArgs) {
+      textarea.value = "/" + command.name + " ";
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
+      setSlashVisible(false);
+      setSlashMenuIndex(0);
+      textarea.focus();
+      return;
+    }
+
+    getVSCodeAPI().postMessage({ type: "slash.execute", raw: "/" + command.name, command: command.name, args: "" });
+    textarea.value = "";
+    textarea.style.height = "auto";
+    setSlashVisible(false);
+    setSlashMenuIndex(0);
+  }, []);
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      if (slashVisible && slashItems.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSlashMenuIndex((prev) => Math.min(prev + 1, slashItems.length - 1));
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSlashMenuIndex((prev) => Math.max(prev - 1, 0));
+          return;
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+          e.preventDefault();
+          const selected = slashItems[slashMenuIndex];
+          if (selected) handleSlashSelect(selected);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setSlashVisible(false);
+          return;
+        }
+      }
+
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSubmit();
         return;
       }
-
       const textarea = textareaRef.current;
       if (!textarea) return;
 
@@ -144,7 +265,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         return;
       }
     },
-    [handleSubmit],
+    [handleSubmit, handleSlashSelect, slashItems, slashMenuIndex, slashVisible],
   );
 
   const handleInput = useCallback(() => {
@@ -152,7 +273,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (!textarea) return;
     textarea.style.height = "auto";
     textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
-  }, []);
+    updateSlashState();
+  }, [updateSlashState]);
 
   const handlePaste = useCallback(async (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const items = Array.from(e.clipboardData?.items ?? []);
@@ -213,6 +335,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       <div
         className={`omp-composer${dragActive ? " omp-composer--drag-active" : ""}`}
       >
+        {visibleResult && (
+          <div className={`slash-result ${visibleResult.ok ? "slash-result--ok" : "slash-result--error"}`}>
+            <span className="slash-result-command">/{visibleResult.command}</span>
+            {visibleResult.message && <span className="slash-result-message">{visibleResult.message}</span>}
+          </div>
+        )}
+        <SlashCommandMenu
+          visible={slashVisible}
+          commands={slashItems}
+          selectedIndex={slashMenuIndex}
+          onSelect={handleSlashSelect}
+        />
         <textarea
           ref={textareaRef}
           rows={1}
@@ -221,6 +355,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           onKeyDown={handleKeyDown}
           onInput={handleInput}
           onPaste={handlePaste}
+          onCompositionStart={() => setIsComposing(true)}
+          onCompositionEnd={() => {
+            setIsComposing(false);
+            updateSlashState();
+          }}
           autoFocus
         />
       </div>

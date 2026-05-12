@@ -151,9 +151,50 @@ body {
   background: color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 14%, transparent);
 }
 .omp-composer {
+  position: relative;
   display: flex; align-items: flex-end; gap: 8px;
   background: var(--omp-input-bg); border: 1px solid var(--omp-accent);
   border-radius: 6px; padding: 8px 12px;
+}
+.slash-result {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 40;
+  animation: slash-result-fade 3s ease-out forwards;
+}
+
+.slash-result--ok {
+  background: color-mix(in srgb, var(--vscode-charts-green, #6a9955) 15%, var(--vscode-editorWidget-background));
+  border: 1px solid color-mix(in srgb, var(--vscode-charts-green, #6a9955) 30%, transparent);
+  color: var(--vscode-foreground);
+}
+
+.slash-result--error {
+  background: color-mix(in srgb, var(--vscode-errorForeground) 10%, var(--vscode-editorWidget-background));
+  border: 1px solid color-mix(in srgb, var(--vscode-errorForeground) 25%, transparent);
+  color: var(--vscode-foreground);
+}
+
+.slash-result-command {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-weight: 600;
+}
+
+.slash-result-message {
+  color: var(--vscode-descriptionForeground);
+}
+
+@keyframes slash-result-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
 }
 .omp-composer--drag-active {
   border-color: color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 65%, var(--vscode-charts-purple, #c586c0));
@@ -2192,6 +2233,41 @@ body {
 .omp-thinking-selector-desc { font-size: 11px; color: var(--omp-muted); flex: 1; }
 .omp-thinking-selector-item i { font-size: 14px; color: var(--omp-success); flex-shrink: 0; }
 
+/* ── Role selector ─────────────────────────────────── */
+.omp-role-selector {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  min-width: 140px;
+  background: var(--vscode-editorWidget-background, var(--omp-bg));
+  border: 1px solid var(--vscode-editorWidget-border, var(--omp-border));
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  padding: 4px;
+  z-index: 60;
+  animation: omp-popover-in 0.12s ease-out;
+}
+.omp-role-selector-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--omp-fg);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+.omp-role-selector-item:hover { background: var(--omp-list-hover); }
+.omp-role-selector-item--active { font-weight: 600; }
+.omp-role-selector-item--active i { font-size: 14px; color: var(--omp-success); flex-shrink: 0; }
+.omp-role-selector-label { font-weight: 500; text-transform: capitalize; }
+
 /* ── Pill with chevron (clickable selectors) ────────── */
 .omp-pill--clickable { cursor: pointer; }
 .omp-pill--disabled { opacity: 0.4; cursor: not-allowed; }
@@ -2669,4 +2745,193 @@ body {
   color: var(--vscode-foreground);
   margin-bottom: 4px;
   line-height: 1.4;
+}
+
+/* ============================================================================
+   Slash Command Menu
+   ============================================================================ */
+
+.slash-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 50;
+  padding: 4px 0;
+}
+
+.slash-menu-item {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 0 4px;
+  color: var(--vscode-foreground);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.slash-menu-item:hover,
+.slash-menu-item.selected {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.slash-menu-item.selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.slash-menu-item.blocked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.slash-menu-name {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--vscode-textLink-foreground);
+}
+
+.slash-menu-item.selected .slash-menu-name {
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.slash-menu-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-rpc { background: color-mix(in srgb, var(--vscode-charts-blue, #569cd6) 20%, transparent); color: var(--vscode-charts-blue, #569cd6); }
+.badge-host { background: color-mix(in srgb, var(--vscode-charts-green, #6a9955) 20%, transparent); color: var(--vscode-charts-green, #6a9955); }
+.badge-ui { background: color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 20%, transparent); color: var(--vscode-charts-yellow, #cca700); }
+.badge-config { background: color-mix(in srgb, var(--vscode-charts-orange, #ce9178) 20%, transparent); color: var(--vscode-charts-orange, #ce9178); }
+.badge-skill { background: color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 20%, transparent); color: var(--vscode-charts-purple, #c586c0); }
+.badge-prompt { background: color-mix(in srgb, var(--vscode-charts-cyan, #4ec9b0) 20%, transparent); color: var(--vscode-charts-cyan, #4ec9b0); }
+.badge-ext { background: color-mix(in srgb, var(--vscode-charts-green, #6a9955) 20%, transparent); color: var(--vscode-charts-green, #6a9955); }
+.badge-blocked { background: color-mix(in srgb, var(--vscode-errorForeground) 15%, transparent); color: var(--vscode-errorForeground); }
+.badge-cmd { background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent); color: var(--vscode-descriptionForeground); }
+
+.slash-menu-desc {
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.slash-menu-item.selected .slash-menu-desc {
+  color: var(--vscode-list-activeSelectionForeground);
+  opacity: 0.8;
+}
+
+/* Expanded density (2-4 results) */
+.slash-menu-item--expanded {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+}
+
+.slash-menu-item--expanded + .slash-menu-item--expanded {
+  border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border) 40%, transparent);
+  border-radius: 0;
+  margin-top: 0;
+}
+
+.slash-menu-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slash-menu-desc--full {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+}
+
+.slash-menu-hint {
+  font-size: 10px;
+  color: var(--vscode-textLink-foreground);
+  opacity: 0.8;
+}
+
+/* Full detail density (1 result) */
+.slash-menu-item--full {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.slash-menu-desc--detail {
+  margin: 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.slash-menu-args {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.slash-menu-args-label {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 500;
+}
+
+.slash-menu-args-value {
+  color: var(--vscode-textLink-foreground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+}
+
+.slash-menu-subcommands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.slash-menu-sub {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--vscode-badge-background) 40%, transparent);
+  color: var(--vscode-badge-foreground);
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.slash-menu-source {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  font-style: italic;
 }
