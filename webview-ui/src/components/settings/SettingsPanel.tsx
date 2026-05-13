@@ -1,6 +1,7 @@
 import { SettingsProvider, useSettings } from "./SettingsContext";
 import { SaveBar } from "./SaveBar";
 import { ModelsTab } from "./tabs/ModelsTab";
+import { InteractionTab } from "./tabs/InteractionTab";
 
 const TABS = [
   { id: "models", label: "Models", icon: "codicon-symbol-class" },
@@ -38,6 +39,8 @@ function SettingsTabContent() {
   switch (activeTab) {
     case "models":
       return <ModelsTab />;
+    case "interaction":
+      return <InteractionTab />;
     default:
       return (
         <div className="omp-settings-tab-content">
