@@ -100,16 +100,29 @@ function hydrateFromMessages(state: TurnTranscriptState, messages: unknown[], tu
     if (role === "user") {
       const content = extractContent(msg.content);
       if (content) {
-        const images = (msg.images as Array<{ mimeType: string; data: string | null }> | undefined) ?? extractImages(msg.content);
-        const fileContexts = msg.fileContexts as Array<{ path: string; line?: number; endLine?: number; languageId?: string }> | undefined;
-        turns.push({
-          kind: "user",
-          id: generateTurnId(),
-          timestamp: (msg.timestamp as number) || Date.now(),
-          text: content,
-          images: images.length > 0 ? images : undefined,
-          fileContexts: fileContexts?.length ? fileContexts : undefined,
-        });
+        // Detect <skill> envelope — render as command card instead of user bubble
+        const skillMatch = content.match(/^<skill name="([^"]+)" location="([^"]*)"(?: kind="(?:skill|prompt)")?>\n/);
+        if (skillMatch) {
+          turns.push({
+            kind: "command",
+            id: generateTurnId(),
+            timestamp: (msg.timestamp as number) || Date.now(),
+            command: skillMatch[1]!,
+            args: "",
+            source: skillMatch[2] || undefined,
+          });
+        } else {
+          const images = (msg.images as Array<{ mimeType: string; data: string | null }> | undefined) ?? extractImages(msg.content);
+          const fileContexts = msg.fileContexts as Array<{ path: string; line?: number; endLine?: number; languageId?: string }> | undefined;
+          turns.push({
+            kind: "user",
+            id: generateTurnId(),
+            timestamp: (msg.timestamp as number) || Date.now(),
+            text: content,
+            images: images.length > 0 ? images : undefined,
+            fileContexts: fileContexts?.length ? fileContexts : undefined,
+          });
+        }
       }
     } else if (role === "assistant" || role === "system") {
       const events: TurnEvent[] = [];
@@ -411,6 +424,30 @@ function handleRuntimeFrame(
 
     case "auto_retry_end":
       return updateLastRetry(state, false);
+
+    case "command_invocation": {
+      const turn: Turn = {
+        kind: "command",
+        id: generateTurnId(),
+        timestamp: Date.now(),
+        command: (frame.command as string) ?? "",
+        args: (frame.args as string) ?? "",
+        source: frame.source as string | undefined,
+      };
+      return { ...state, turns: [...state.turns, turn] };
+    }
+
+    case "command_badge": {
+      const turn: Turn = {
+        kind: "command",
+        id: generateTurnId(),
+        timestamp: Date.now(),
+        command: (frame as any).command ?? "",
+        args: (frame as any).message ?? "",
+        ephemeral: true,
+      };
+      return { ...state, turns: [...state.turns, turn] };
+    }
 
     default:
       return state;

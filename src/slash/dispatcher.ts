@@ -11,6 +11,8 @@ export interface SlashDispatcherDeps {
   postToWebview: (message: unknown) => void;
   openSettingsPanel: (tab: "root" | "agents" | "mcp" | "tools" | "context" | "memory") => void;
   openHelpUrl: string;
+  expandAndSend?: (command: SlashCommand, args: string) => Promise<SlashExecutionResult>;
+  exportMd?: (outputPath?: string) => Promise<string | undefined>;
 }
 
 export class SlashDispatcher {
@@ -37,9 +39,13 @@ export class SlashDispatcher {
           return { ok: true, command: command.name, message: `Opened ${command.route.tab} settings` };
         case "blocked":
           return { ok: false, command: command.name, message: command.route.reason };
-        case "passThrough":
+        case "passThrough": {
+          if (command.runtimeMeta?.path && this.deps.expandAndSend) {
+            return this.deps.expandAndSend(command, args);
+          }
           await this.deps.rpc.prompt(raw);
           return { ok: true, command: command.name };
+        }
         default:
           return { ok: false, command: command.name, message: "Unsupported command route" };
       }
@@ -124,8 +130,9 @@ export class SlashDispatcher {
         return { ok: true, command: command.name };
       }
       case "export_html": {
-        await this.deps.rpc.send({ type: "export_html", outputPath: args || undefined });
-        return { ok: true, command: command.name };
+        const res = await this.deps.rpc.send({ type: "export_html", outputPath: args || undefined });
+        const resultPath = typeof res === "object" && res !== null && "path" in res ? (res as { path: string }).path : undefined;
+        return { ok: true, command: command.name, message: resultPath ? `Saved to ${resultPath}` : "Exported" };
       }
       case "set_session_name": {
         if (!args.trim()) {
@@ -135,8 +142,9 @@ export class SlashDispatcher {
         return { ok: true, command: command.name };
       }
       case "handoff": {
-        await this.deps.rpc.send({ type: "handoff", customInstructions: args || undefined });
-        return { ok: true, command: command.name };
+        const res = await this.deps.rpc.send({ type: "handoff", customInstructions: args || undefined });
+        const savedPath = typeof res === "object" && res !== null && "savedPath" in res ? (res as { savedPath?: string }).savedPath : undefined;
+        return { ok: true, command: command.name, message: savedPath ? `Saved to ${savedPath}` : "Handoff created" };
       }
       case "get_commands": {
         await this.deps.rpc.send({ type: "get_commands" });
@@ -187,8 +195,17 @@ export class SlashDispatcher {
         return { ok: true, command: command.name };
       }
       case "get_session_stats": {
-        await this.deps.rpc.send({ type: "get_session_stats" });
-        return { ok: true, command: command.name };
+        const res = await this.deps.rpc.send({ type: "get_session_stats" });
+        const stats = res as { userMessages?: number; assistantMessages?: number; toolCalls?: number; totalMessages?: number; tokens?: { input: number; output: number; cacheRead: number; total: number }; cost?: number } | null;
+        if (stats) {
+          const msg = [
+            `${stats.totalMessages ?? 0} messages (${stats.userMessages ?? 0} user, ${stats.assistantMessages ?? 0} assistant, ${stats.toolCalls ?? 0} tool)`,
+            stats.tokens ? `Tokens: ${stats.tokens.input} in / ${stats.tokens.output} out / ${stats.tokens.cacheRead} cache` : null,
+            stats.cost != null ? `Cost: $${stats.cost.toFixed(4)}` : null,
+          ].filter(Boolean).join(" · ");
+          return { ok: true, command: command.name, message: msg };
+        }
+        return { ok: true, command: command.name, message: "No stats available" };
       }
       default:
         return { ok: false, command: command.name, message: "RPC command type not yet implemented" };
@@ -246,6 +263,16 @@ export class SlashDispatcher {
       case "cycleRoles":
         await this.deps.executeVscodeCommand("omp.cycleRoles");
         return { ok: true, command: command.name };
+      case "refreshCommands":
+        await this.deps.executeVscodeCommand("omp.refreshCommands");
+        return { ok: true, command: command.name, message: "Catalog refreshed" };
+      case "exportMd": {
+        if (!this.deps.exportMd) {
+          return { ok: false, command: command.name, message: "Markdown export not available" };
+        }
+        const mdPath = await this.deps.exportMd(_args.trim() || undefined);
+        return { ok: true, command: command.name, message: mdPath ? `Saved to ${mdPath}` : "Exported" };
+      }
       default:
         return { ok: false, command: command.name, message: "Unknown host action" };
     }

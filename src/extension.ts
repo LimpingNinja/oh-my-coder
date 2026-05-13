@@ -32,7 +32,8 @@ import { refreshCatalog, loadFromDisk, getCatalogEntries, isExpired, hasCatalog 
 import { parseSlashInput, mergeSlashCatalog, resolveSlashCommand } from "./slash/registry.ts";
 import { SlashDispatcher } from "./slash/dispatcher.ts";
 import type { RuntimeDiscoveredCommand, SlashCommand } from "./slash/types.ts";
-import { getOmpConfig, refreshOmpConfig } from "./config/ompConfig.ts";
+import { expandCommand } from "./slash/expander.ts";
+import { getOmpConfig, refreshOmpConfig, resolveAgentDir } from "./config/ompConfig.ts";
 
 let extensionUri: vscode.Uri;
 let outputChannel: vscode.OutputChannel;
@@ -287,14 +288,19 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
     case "chat.send": {
       const slashParsed = parseSlashInput(message.content);
       if (slashParsed.isSlash && slashParsed.command) {
-        outputChannel.appendLine(`[omp] chat.send intercepted as slash: /${slashParsed.command}`);
-        void handleSlashExecute({
-          type: "slash.execute",
-          raw: slashParsed.raw,
-          command: slashParsed.command,
-          args: slashParsed.args,
-        });
-        break;
+        const resolved = resolveSlashCommand(slashCatalog, slashParsed.command, slashParsed.args);
+        const shouldHandleAsNormalChat =
+          !resolved || (resolved.route.kind === "passThrough" && !resolved.runtimeMeta?.path);
+        if (!shouldHandleAsNormalChat) {
+          outputChannel.appendLine(`[omp] chat.send intercepted as slash: /${slashParsed.command}`);
+          void handleSlashExecute({
+            type: "slash.execute",
+            raw: slashParsed.raw,
+            command: slashParsed.command,
+            args: slashParsed.args,
+          });
+          break;
+        }
       }
       outputChannel.appendLine(`[omp] chat.send: ${message.sessionPath} (behavior: ${message.behavior ?? "auto"})`);
       handleChatSend(message.sessionPath, message.content, message.behavior, message.fileContexts, message.attachments);
@@ -1854,10 +1860,57 @@ async function refreshSlashCatalogFromRuntime(): Promise<void> {
     }
   }
 
+  // If RPC returned nothing, scan command directories directly (same paths bridge uses)
+  if (runtimeCommands.length === 0) {
+    runtimeCommands = await scanCommandDirectories();
+  }
+
   slashCatalog = mergeSlashCatalog(runtimeCommands);
   slashCatalogVersion = `${Date.now()}`;
   pushSlashCatalog();
+  outputChannel.appendLine(`[omp] slash catalog refreshed: ${slashCatalog.length} total commands (${runtimeCommands.length} from runtime/scan)`);
+}
 
+/** Scan command directories directly when get_commands RPC is unavailable. */
+async function scanCommandDirectories(): Promise<RuntimeDiscoveredCommand[]> {
+  const agentDir = resolveAgentDir();
+  const commands: RuntimeDiscoveredCommand[] = [];
+
+  const scanDir = async (dir: string, location: string) => {
+    try {
+      const entries = await fs.readdir(dir);
+      for (const entry of entries) {
+        if (!entry.endsWith(".md")) continue;
+        const filePath = path.join(dir, entry);
+        const name = entry.replace(/\.md$/, "");
+        let description: string | undefined;
+        try {
+          const content = await fs.readFile(filePath, "utf-8");
+          if (content.startsWith("---")) {
+            const endIdx = content.indexOf("\n---", 3);
+            if (endIdx > 0) {
+              const frontmatter = content.slice(4, endIdx);
+              const descLine = frontmatter.split("\n").find((l) => l.startsWith("description:"));
+              description = descLine?.slice(12).trim();
+            }
+          }
+          if (!description) {
+            description = content.split("\n").find((l) => l.trim())?.slice(0, 80);
+          }
+        } catch {}
+        commands.push({ name, description, source: "prompt", location, path: filePath });
+      }
+    } catch {}
+  };
+
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  await scanDir(path.join(agentDir, "commands"), "user");
+  if (workspaceFolder) {
+    await scanDir(path.join(workspaceFolder, ".omp", "commands"), "project");
+  }
+
+  return commands;
 }
 function pushSlashCatalog(): void {
   const visibleCommands = slashCatalog.filter((cmd) => cmd.phase <= CURRENT_PHASE || cmd.source === "runtime");
@@ -1880,6 +1933,46 @@ function pushSlashCatalog(): void {
       },
     })),
   });
+}
+
+/**
+ * Ephemeral badge rule:
+ * Show badge when command effect is INVISIBLE in the UI.
+ * Skip when: UI trigger (picker opens), Tier 4 with path (command card), or
+ * mode/model/thinking change (pill updates visually).
+ */
+const BADGE_SKIP_RPC_TYPES = new Set([
+  "set_model", "set_thinking_level", "set_steering_mode", "set_follow_up_mode",
+  "set_interrupt_mode", "set_auto_compaction", "set_auto_retry",
+  "cycle_model", "cycle_thinking_level", "new_session",
+]);
+
+/** Host actions with visible side effects — no badge needed. */
+const BADGE_SKIP_HOST_ACTIONS = new Set([
+  "newSession",       // session changes entirely
+  "resumeSession",    // session switches — visible
+  "openChat",         // panel opens — visible
+  "openSessionFile",  // editor tab opens — visible
+  "openHelpUrl",      // browser opens — visible
+  "showDiagnostics",  // output channel opens — visible
+  "cycleRoles",       // role pill updates — visible
+]);
+
+function shouldEmitBadge(command: SlashCommand): boolean {
+  // UI triggers have visible effect (picker/screen opens)
+  if (command.route.kind === "webview") return false;
+  // Tier 4 with path already gets a command card
+  if (command.runtimeMeta?.path) return false;
+  // Config panels open visibly
+  if (command.route.kind === "config") return false;
+  // Blocked commands show error toast
+  if (command.route.kind === "blocked") return false;
+  // Mode/model/thinking RPC commands update pills visibly
+  if (command.route.kind === "rpc" && BADGE_SKIP_RPC_TYPES.has(command.route.rpcType)) return false;
+  // Host actions with visible side effects
+  if (command.route.kind === "host" && BADGE_SKIP_HOST_ACTIONS.has(command.route.action)) return false;
+  // Everything else: badge it (clipboard ops, background tasks, invisible effects)
+  return true;
 }
 
 async function handleSlashExecute(
@@ -1920,6 +2013,19 @@ async function handleSlashExecute(
 
   const result = await slashDispatcher.execute(command, args, message.raw);
 
+  // Emit command card frame for Tier 4 (skill/prompt) commands on success
+  if (result.ok && command.runtimeMeta?.path) {
+    postToWebview({
+      type: "runtime.frame",
+      frame: {
+        type: "command_invocation",
+        command: command.name,
+        args: args,
+        source: (command as any).runtimeMeta?.path,
+      },
+    });
+  }
+
   if (result.ok && command.route.kind === "rpc" && rpcController?.isRunning()) {
     try {
       const state = await rpcController.getState();
@@ -1950,6 +2056,18 @@ async function handleSlashExecute(
     ok: result.ok,
     message: result.message,
   });
+
+  // Emit ephemeral badge for commands whose effect is invisible in the UI
+  if (result.ok && shouldEmitBadge(command)) {
+    postToWebview({
+      type: "runtime.frame",
+      frame: {
+        type: "command_badge",
+        command: command.name,
+        message: result.message,
+      },
+    });
+  }
 }
 
 /**
@@ -2193,6 +2311,13 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       },
     ],
+    [
+      "omp.refreshCommands",
+      async () => {
+        outputChannel.appendLine("[omp] Manual slash catalog refresh triggered");
+        await refreshSlashCatalogFromRuntime();
+      },
+    ],
   ];
 
   for (const [id, handler] of commands) {
@@ -2238,6 +2363,49 @@ export async function activate(context: vscode.ExtensionContext) {
       outputChannel.appendLine("[omp] slash settings panel route not implemented yet");
     },
     openHelpUrl: "https://github.com/anthropics/oh-my-coder",
+    expandAndSend: async (command, args) => {
+      const filePath = command.runtimeMeta?.path;
+      if (!filePath) {
+        return { ok: false, command: command.name, message: "No file path for command" };
+      }
+      const kind = command.runtimeMeta?.source === "skill" ? "skill" : "prompt";
+      const result = await expandCommand(filePath, args, command.name, kind);
+      if (!result.ok) {
+        return { ok: false, command: command.name, message: result.message };
+      }
+      await rpcController!.prompt({ message: result.envelope });
+      outputChannel.appendLine(`[omp] Expanded /${command.name} from ${filePath}`);
+      return { ok: true, command: command.name, message: `Expanded from ${filePath}` };
+    },
+    exportMd: async (outputPath?: string) => {
+      if (!rpcController?.isRunning()) return undefined;
+      const res = await rpcController.send({ type: "get_messages" } as any);
+      const messages = (res as { messages?: Array<{ role: string; content: unknown }> })?.messages
+        ?? (Array.isArray(res) ? res as Array<{ role: string; content: unknown }> : []);
+
+      const lines: string[] = ["# Session Transcript\n"];
+      for (const msg of messages) {
+        const role = msg.role === "user" ? "User" : msg.role === "assistant" ? "Assistant" : msg.role;
+        const content = typeof msg.content === "string" ? msg.content :
+          Array.isArray(msg.content) ? (msg.content as Array<{ type?: string; text?: string }>).filter(b => b.type === "text").map(b => b.text).join("\n") : "";
+        if (!content.trim()) continue;
+        lines.push(`## ${role}\n`);
+        lines.push(content);
+        lines.push("");
+      }
+
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      let resolvedPath: string;
+      if (outputPath) {
+        resolvedPath = path.isAbsolute(outputPath) ? outputPath : path.join(workspaceRoot ?? process.cwd(), outputPath);
+      } else {
+        resolvedPath = path.join(workspaceRoot ?? process.cwd(), "session-export.md");
+      }
+
+      await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
+      await fs.writeFile(resolvedPath, lines.join("\n"), "utf-8");
+      return resolvedPath;
+    },
   });
   void refreshSlashCatalogFromRuntime();
 

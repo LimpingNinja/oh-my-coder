@@ -13,7 +13,7 @@ import { ClickableText } from "./ClickableText";
 import { UiRequestTurn } from "./UiRequestTurn";
 import { extractResultText, getTaskOutputPath, parseTaskResultSegments } from "../utils/resultParser";
 import { getVSCodeAPI } from "../vscode";
-import { useAppState } from "../state/store";
+import { useAppState, removeTurn } from "../state/store";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useState, useCallback } from "react";
@@ -27,11 +27,41 @@ export function TurnView({ turn }: TurnViewProps) {
     <div data-turn-id={turn.id}>
       {turn.kind === "user" ? (
         <UserTurn text={turn.text} images={turn.images} fileContexts={turn.fileContexts} queuedAs={turn.queuedAs} />
+      ) : turn.kind === "command" ? (
+        <CommandTurn turnId={turn.id} command={turn.command} args={turn.args} source={turn.source} ephemeral={turn.ephemeral} />
       ) : turn.kind === "ui-request" ? (
         <UiRequestTurn turnId={turn.id} request={turn.request} response={turn.response} />
       ) : (
         <AgentTurn turn={turn} />
       )}
+    </div>
+  );
+}
+
+function CommandTurn({ turnId, command, args, source, ephemeral }: { turnId: string; command: string; args: string; source?: string; ephemeral?: boolean }) {
+  const handleDismiss = useCallback(() => removeTurn(turnId), [turnId]);
+  if (ephemeral) {
+    return (
+      <div className="omp-turn omp-turn-badge">
+        <div className="omp-ephemeral-badge">
+          <i className="codicon codicon-check" />
+          <span className="omp-ephemeral-badge-name">/{command}</span>
+          {args && <span className="omp-ephemeral-badge-message">{args}</span>}
+          <button className="omp-ephemeral-badge-close" onClick={handleDismiss} title="Dismiss">
+            <i className="codicon codicon-close" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="omp-turn omp-turn-command">
+      <div className="omp-command-card">
+        <i className="codicon codicon-terminal" />
+        <span className="omp-command-card-name">/{command}</span>
+        {args && <span className="omp-command-card-args">{args}</span>}
+        {source && <span className="omp-command-card-source">{source}</span>}
+      </div>
     </div>
   );
 }

@@ -323,7 +323,9 @@ export type OmpRpcFrameForWebview =
   | { type: "auto_compaction_start"; reason: string; action: string }
   | { type: "auto_compaction_end" }
   | { type: "auto_retry_start" }
-  | { type: "auto_retry_end" };
+  | { type: "auto_retry_end" }
+  | { type: "command_invocation"; command: string; args: string; source?: string }
+  | { type: "command_badge"; command: string; message?: string };
 
 /**
  * Chat message shape for the webview.

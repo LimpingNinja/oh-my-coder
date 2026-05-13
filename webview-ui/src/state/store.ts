@@ -431,6 +431,16 @@ export function setLastSlashResult(result: { command: string; ok: boolean; messa
   setState({ lastSlashResult: { ...result, timestamp: Date.now() } });
 }
 
+export function removeTurn(turnId: string) {
+  const { turnTranscript } = getState();
+  setState({
+    turnTranscript: {
+      ...turnTranscript,
+      turns: turnTranscript.turns.filter(t => t.id !== turnId),
+    },
+  });
+}
+
 // ============================================================================
 // React hook
 // ============================================================================

@@ -60,7 +60,8 @@ export type TurnId = string;
 export type Turn =
   | { kind: "user"; id: TurnId; timestamp: number; text: string; images?: Array<{ mimeType: string; data: string | null; blobRef?: string }>; fileContexts?: Array<{ path: string; line?: number; endLine?: number; languageId?: string }>; queuedAs?: "steer" | "followUp" }
   | { kind: "agent"; id: TurnId; timestamp: number; events: TurnEvent[]; active: boolean; metadata?: TurnMetadata }
-  | { kind: "ui-request"; id: TurnId; timestamp: number; request: UiRequestData; response?: UiResponseData };
+  | { kind: "ui-request"; id: TurnId; timestamp: number; request: UiRequestData; response?: UiResponseData }
+  | { kind: "command"; id: TurnId; timestamp: number; command: string; args: string; source?: string; ephemeral?: boolean };
 
 /**
  * An event within an agent turn. Rendered sequentially, each by its own component.

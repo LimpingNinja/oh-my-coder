@@ -2935,3 +2935,97 @@ body {
   opacity: 0.6;
   font-style: italic;
 }
+
+/* ── Command invocation cards ──────────────────────── */
+.omp-turn-command {
+  padding: 4px 16px;
+}
+
+.omp-command-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-textLink-foreground) 20%, transparent);
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.omp-command-card .codicon {
+  color: var(--vscode-textLink-foreground);
+  font-size: 14px;
+}
+
+.omp-command-card-name {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-weight: 600;
+  color: var(--vscode-textLink-foreground);
+}
+
+.omp-command-card-args {
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.omp-command-card-source {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  font-style: italic;
+  margin-left: 4px;
+}
+
+/* Ephemeral command badges (live session only) */
+.omp-turn-badge {
+  padding: 2px 16px;
+}
+
+.omp-ephemeral-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.omp-ephemeral-badge .codicon {
+  font-size: 12px;
+  color: var(--vscode-charts-green, #6a9955);
+}
+
+.omp-ephemeral-badge-name {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-weight: 500;
+}
+
+.omp-ephemeral-badge-message {
+  opacity: 0.7;
+}
+
+.omp-ephemeral-badge-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.omp-ephemeral-badge:hover .omp-ephemeral-badge-close {
+  opacity: 0.7;
+}
+
+.omp-ephemeral-badge-close:hover {
+  opacity: 1 !important;
+  color: var(--vscode-foreground);
+}

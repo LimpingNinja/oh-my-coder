@@ -69,7 +69,9 @@ export interface SlashHostRoute {
     | "showDiagnostics"
     | "openHelpUrl"
     | "clearComposer"
-    | "cycleRoles";
+    | "cycleRoles"
+    | "refreshCommands"
+    | "exportMd";
 }
 
 export interface SlashWebviewRoute {
