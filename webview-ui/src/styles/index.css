@@ -3029,3 +3029,383 @@ body {
   opacity: 1 !important;
   color: var(--vscode-foreground);
 }
+
+/* ============================================================================
+   Settings Panel
+   ============================================================================ */
+
+.omp-settings {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+}
+
+.omp-settings-sidebar {
+  width: 180px;
+  min-width: 180px;
+  border-right: 1px solid var(--vscode-panel-border);
+  padding: 12px 0;
+  overflow-y: auto;
+}
+
+.omp-settings-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  border-left: 2px solid transparent;
+}
+
+.omp-settings-tab-btn:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.omp-settings-tab-btn--active {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+  border-left-color: var(--vscode-focusBorder);
+}
+
+.omp-settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+  max-width: 700px;
+}
+
+.omp-settings-tab-content h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 20px;
+}
+
+.omp-settings-placeholder {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+/* SettingsRow */
+.omp-settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 50%, transparent);
+  gap: 24px;
+}
+
+.omp-settings-row--last {
+  border-bottom: none;
+}
+
+.omp-settings-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.omp-settings-row-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.omp-settings-row-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.4;
+}
+
+.omp-settings-row-control {
+  flex-shrink: 0;
+}
+
+/* Section headers */
+.omp-settings-section {
+  margin-top: 24px;
+}
+
+.omp-settings-section:first-child {
+  margin-top: 0;
+}
+
+.omp-settings-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--vscode-foreground);
+}
+
+.omp-settings-section-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  margin: 0 0 12px;
+}
+
+/* Save bar */
+.omp-settings-savebar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 10px 24px;
+  background: var(--vscode-editorWidget-background);
+  border-top: 1px solid var(--vscode-panel-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 100;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.omp-settings-savebar-error {
+  font-size: 12px;
+  color: var(--vscode-errorForeground);
+}
+
+.omp-settings-savebar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.omp-settings-savebar-discard {
+  padding: 4px 12px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.omp-settings-savebar-save {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 4px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.omp-settings-savebar-save:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+/* Settings sub-tabs */
+.omp-settings-subtabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  margin-bottom: 20px;
+}
+
+.omp-settings-subtab {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.omp-settings-subtab:hover {
+  color: var(--vscode-foreground);
+}
+
+.omp-settings-subtab--active {
+  color: var(--vscode-foreground);
+  border-bottom-color: var(--vscode-focusBorder);
+}
+
+.omp-settings-subtab-content {
+  padding-top: 4px;
+}
+
+/* Settings controls */
+.omp-settings-select {
+  padding: 4px 8px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-size: 12px;
+  min-width: 160px;
+}
+
+.omp-settings-select:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.omp-settings-toggle {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--vscode-focusBorder);
+}
+
+/* Roles table */
+.omp-settings-roles-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.omp-settings-role-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.omp-settings-role-name {
+  font-weight: 600;
+  font-size: 12px;
+  min-width: 80px;
+  color: var(--vscode-textLink-foreground);
+}
+
+.omp-settings-role-model {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.omp-settings-cycle-order {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.omp-settings-cycle-item {
+  font-weight: 500;
+}
+
+/* Roles editor */
+.omp-settings-roles-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.omp-settings-role-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.omp-settings-role-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.omp-settings-input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.omp-settings-input--small {
+  flex: 0 0 120px;
+}
+
+.omp-settings-input:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.omp-settings-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+
+.omp-settings-icon-btn:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.omp-settings-icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.omp-settings-btn-small {
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.omp-settings-btn-small:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}
+
+/* Cycle order editor */
+.omp-settings-cycle-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.omp-settings-cycle-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.omp-settings-cycle-edit-name {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Enabled models */
+.omp-settings-enabled-models {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.omp-settings-enabled-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}

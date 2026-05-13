@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useAppState } from "../state/store";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
@@ -9,12 +10,21 @@ interface ThinkingBlockProps {
 }
 
 export function ThinkingBlock({ content, defaultOpen = false }: ThinkingBlockProps) {
+  const { displaySettings } = useAppState();
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   const preview = useMemo(() => {
     const firstLine = content.split("\n")[0] || "";
     return firstLine.length > 80 ? firstLine.slice(0, 80) + "…" : firstLine;
   }, [content]);
+
+  if (displaySettings.hideThinkingBlock) {
+    return (
+      <div className="omp-thinking-block omp-thinking-hidden">
+        <span className="omp-thinking-label">Thinking…</span>
+      </div>
+    );
+  }
 
   return (
     <div className="omp-thinking-block">

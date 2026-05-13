@@ -182,7 +182,17 @@ export type WebviewToExtensionMessage =
   /** Execute a parsed slash command. */
   | { type: "slash.execute"; raw: string; command: string; args: string }
   /** Request the current slash command catalog. */
-  | { type: "slash.catalog.request" };
+  | { type: "slash.catalog.request" }
+
+  // ── Settings panel ────────────────────────────────────────────────────
+  /** Request full config snapshot for settings panel. */
+  | { type: "settings.load" }
+  /** Save settings changes to config.yml. */
+  | { type: "settings.save"; config: Record<string, unknown> }
+  /** Discard settings draft. */
+  | { type: "settings.discard" }
+  /** Open config.yml in VS Code editor. */
+  | { type: "settings.openConfigFile"; scope?: "global" | "project" };
 
 // ============================================================================
 // Extension → Webview messages
@@ -279,7 +289,19 @@ export type ExtensionToWebviewMessage =
       scope: "launch" | "runtime" | "sessionList" | "bridge" | "extensionUi";
       message: string;
       retry?: WebviewToExtensionMessage;
-    };
+    }
+  // ── Settings panel ────────────────────────────────────────────────────
+  /** Full config snapshot delivered to settings panel. */
+  | { type: "settings.loaded"; config: Record<string, unknown>; runtimeState?: Record<string, unknown> }
+  /** Config saved successfully. */
+  | { type: "settings.updated"; config: Record<string, unknown> }
+  /** Config save failed. */
+  | { type: "settings.updateFailed"; message: string; details?: string }
+  /** Navigate webview to settings panel with optional tab. */
+  | { type: "settings.navigate"; tab?: string }
+  // ── Display settings ─────────────────────────────────────────────────
+  /** Display settings pushed from extension host (e.g. after config save). */
+  | { type: "display.settings"; hideThinkingBlock?: boolean; showTokenUsage?: boolean };
 
 // ============================================================================
 // Launch state
@@ -434,6 +456,10 @@ const webviewToExtensionTypes = new Set<string>([
   "slash.execute",
   "runtime.setRole",
   "slash.catalog.request",
+  "settings.load",
+  "settings.save",
+  "settings.discard",
+  "settings.openConfigFile",
 ]);
 
 const extensionToWebviewTypes = new Set<string>([
@@ -463,4 +489,9 @@ const extensionToWebviewTypes = new Set<string>([
   "ui.trigger",
   "composer.clear",
   "error",
+  "settings.loaded",
+  "settings.updated",
+  "settings.updateFailed",
+  "settings.navigate",
+  "display.settings",
 ]);

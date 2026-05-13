@@ -18,6 +18,7 @@ import {
   setModelCatalog,
   setSlashCatalog,
   setLastSlashResult,
+  setDisplaySettings,
   upsertMessage,
   updateMessage,
   appendMessage,
@@ -380,6 +381,11 @@ export function useMessageHandler() {
           // Dispatch a custom event that the Composer can listen for
           const text = msg.text as string;
           window.dispatchEvent(new CustomEvent("omp:setEditorText", { detail: { text } }));
+          break;
+        }
+
+        case "display.settings": {
+          setDisplaySettings(msg as { hideThinkingBlock?: boolean; showTokenUsage?: boolean });
           break;
         }
       }

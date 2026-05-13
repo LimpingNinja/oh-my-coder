@@ -148,6 +148,7 @@ export async function createBridge(
   return {
     server,
     token,
+    get reverseBridgePort() { return state.reverseBridgePort; },
     url: `http://127.0.0.1:${address.port}`,
     dispose: async () => {
       await new Promise<void>((resolve, reject) => {

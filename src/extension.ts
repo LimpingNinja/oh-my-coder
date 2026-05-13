@@ -33,7 +33,8 @@ import { parseSlashInput, mergeSlashCatalog, resolveSlashCommand } from "./slash
 import { SlashDispatcher } from "./slash/dispatcher.ts";
 import type { RuntimeDiscoveredCommand, SlashCommand } from "./slash/types.ts";
 import { expandCommand } from "./slash/expander.ts";
-import { getOmpConfig, refreshOmpConfig, resolveAgentDir } from "./config/ompConfig.ts";
+import { getOmpConfig, refreshOmpConfig, resolveAgentDir, writeOmpConfig, watchConfigFile, getOmpConfigPath } from "./config/ompConfig.ts";
+import { SettingsEditorProvider } from "./settings/provider.ts";
 
 let extensionUri: vscode.Uri;
 let outputChannel: vscode.OutputChannel;
@@ -52,7 +53,7 @@ let rpcController: OmpRpcControllerImpl | undefined;
 let slashCatalog: SlashCommand[] = [];
 let slashCatalogVersion = "0";
 let slashDispatcher: SlashDispatcher | undefined;
-const CURRENT_PHASE = 2;
+const CURRENT_PHASE = 4;
 // Session state — tracks the current session list and selection.
 // These are owned by the extension host; the webview renders them.
 let currentSessionListState: OmpSessionListState = { kind: "loading" };
@@ -147,6 +148,33 @@ async function startBridge(
     outputChannel.appendLine(
       `[omp] bridge startup failed: ${error instanceof Error ? error.message : String(error)}`,
     );
+    return undefined;
+  }
+}
+
+async function callReverseBridge(path: string, body?: unknown): Promise<unknown> {
+  const port = bridgeContext?.reverseBridgePort;
+  if (!port) {
+    outputChannel.appendLine("[omp] Reverse bridge not available");
+    return undefined;
+  }
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: body !== undefined ? "POST" : "GET",
+      headers: {
+        "content-type": "application/json",
+        "x-omp-authorization": bridgeContext!.token,
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: response.statusText }));
+      outputChannel.appendLine(`[omp] Reverse bridge ${path} failed: ${JSON.stringify(err)}`);
+      return undefined;
+    }
+    return await response.json();
+  } catch (err) {
+    outputChannel.appendLine(`[omp] Reverse bridge ${path} error: ${err instanceof Error ? err.message : String(err)}`);
     return undefined;
   }
 }
@@ -517,6 +545,75 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       })();
       break;
     }
+
+    case "settings.load":
+      outputChannel.appendLine("[omp] settings.load");
+      void (async () => {
+        const config = await getOmpConfig();
+        postToWebview({ type: "settings.loaded", config: config.raw });
+        SettingsEditorProvider.postMessage({ type: "settings.loaded", config: config.raw });
+      })();
+      break;
+
+    case "settings.save":
+      outputChannel.appendLine("[omp] settings.save");
+      void (async () => {
+        try {
+          const updated = await writeOmpConfig(message.config);
+
+          // Apply to running runtime via reverse bridge (instant)
+          const result = await callReverseBridge("/settings", message.config);
+          if (result) {
+            outputChannel.appendLine(`[omp] Reverse bridge applied settings: ${JSON.stringify(result)}`);
+          }
+
+          // Refresh UI state
+          if (rpcController?.isRunning()) {
+            try {
+              const state = await rpcController.getState();
+              currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
+              postToWebview({ type: "runtime.state", state: currentRuntimeState });
+              if (state.steeringMode) currentSteeringMode = state.steeringMode;
+              if (state.followUpMode) currentFollowUpMode = state.followUpMode;
+              if (state.interruptMode) currentInterruptMode = state.interruptMode;
+              updateHeaderFromOmpState(state);
+              pushFooterState();
+            } catch {}
+            cachedModelRoles = updated.modelRoles;
+            cachedCycleOrder = updated.cycleOrder;
+          }
+
+          postToWebview({ type: "settings.updated", config: updated.raw });
+          SettingsEditorProvider.postMessage({ type: "settings.updated", config: updated.raw });
+          postToWebview({
+            type: "display.settings",
+            hideThinkingBlock: !!updated.raw.hideThinkingBlock,
+            showTokenUsage: !!updated.raw["display.showTokenUsage"],
+          } as any);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.discard":
+      // No-op on host — webview handles draft discard locally
+      break;
+
+    case "settings.openConfigFile":
+      outputChannel.appendLine("[omp] settings.openConfigFile");
+      void (async () => {
+        const configFilePath = getOmpConfigPath();
+        try {
+          const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(configFilePath));
+          await vscode.window.showTextDocument(doc);
+        } catch (err) {
+          outputChannel.appendLine(`[omp] failed to open config file: ${err}`);
+        }
+      })();
+      break;
 
     default: {
       // Exhaustive check — if a new message type is added to the union
@@ -1473,6 +1570,15 @@ function pushInitialState(): void {
 
   // Push slash command catalog.
   pushSlashCatalog();
+
+  // Push display settings (async — reads config).
+  void getOmpConfig().then((config) => {
+    postToWebview({
+      type: "display.settings",
+      hideThinkingBlock: !!config.raw.hideThinkingBlock,
+      showTokenUsage: !!config.raw["display.showTokenUsage"],
+    } as any);
+  });
 }
 
 /**
@@ -2227,6 +2333,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // Register commands
   const commands: [string, (...args: never[]) => void | Promise<void>][] = [
     ["omp.openChat", () => focusChatView()],
+    ["omp.openSettings", () => SettingsEditorProvider.openPanel(extensionUri)],
+    ["omp.showHistory", () => showHistoryScreen()],
     ["omp.newSession", () => focusChatView()],
     ["omp.resumeSession", () => focusChatView()],
     ["omp.addFileToChatContext", (uri?: vscode.Uri) => addFileToChatContext(uri)],
@@ -2345,6 +2453,19 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   });
 
+  // Settings panel provider — wire message handler and file watcher
+  SettingsEditorProvider.setMessageHandler(handleWebviewMessage);
+  const configWatcher = watchConfigFile(() => {
+    outputChannel.appendLine("[omp] config.yml changed externally — refreshing");
+    void (async () => {
+      const config = await refreshOmpConfig();
+      postToWebview({ type: "settings.loaded", config: config.raw });
+      SettingsEditorProvider.postMessage({ type: "settings.loaded", config: config.raw });
+    })();
+  });
+  context.subscriptions.push({ dispose: () => configWatcher.dispose() });
+  context.subscriptions.push({ dispose: () => SettingsEditorProvider.dispose() });
+
   slashDispatcher = new SlashDispatcher({
     rpc: {
       send: async (command: Record<string, unknown>) => {
@@ -2359,8 +2480,8 @@ export async function activate(context: vscode.ExtensionContext) {
     isConnected: () => !!rpcController?.isRunning(),
     executeVscodeCommand: vscode.commands.executeCommand,
     postToWebview: (message: unknown) => postToWebview(message as ExtensionToWebviewMessage),
-    openSettingsPanel: (_tab) => {
-      outputChannel.appendLine("[omp] slash settings panel route not implemented yet");
+    openSettingsPanel: (tab) => {
+      SettingsEditorProvider.openPanel(extensionUri, tab);
     },
     openHelpUrl: "https://github.com/anthropics/oh-my-coder",
     expandAndSend: async (command, args) => {
@@ -2456,6 +2577,11 @@ export async function deactivate() {
  */
 function focusChatView(): void {
   vscode.commands.executeCommand("omp.chatView.focus");
+}
+
+function showHistoryScreen(): void {
+  focusChatView();
+  postToWebview({ type: "ui.trigger", action: "openHistory" });
 }
 
 async function addFileToChatContext(uri?: vscode.Uri): Promise<void> {

@@ -106,6 +106,13 @@ export async function handleRpc(
       }
       return { received: true, count: Array.isArray(commands) ? commands.length : 0 };
     }
+    case "registerReverseBridge": {
+      const port = params.port as number;
+      if (typeof port === "number" && port > 0) {
+        state.reverseBridgePort = port;
+      }
+      return { registered: true, port };
+    }
     default:
       throw new Error(`Unknown bridge method: ${method}`);
   }

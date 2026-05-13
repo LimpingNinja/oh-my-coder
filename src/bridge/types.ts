@@ -60,6 +60,7 @@ export interface BridgeContext {
   server: Server;
   url: string;
   token: string;
+  reverseBridgePort?: number;
   dispose(): Promise<void>;
 }
 
@@ -91,4 +92,5 @@ export interface BridgeState {
   getTurnMetadata(): TurnMetadataSnapshot;
   getUserAttachments(): UserAttachmentsSnapshot | null;
   onCommandsDiscovered?: (commands: Array<{ name: string; description?: string; source: string; location?: string; path?: string }>) => void;
+  reverseBridgePort?: number;
 }

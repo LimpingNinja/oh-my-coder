@@ -290,10 +290,85 @@ export default function (pi) {
     }
   };
 
+  // ─── Reverse Bridge Server ────────────────────────────────────────────────────
+  let reverseBridgeServer;
+
+  const startReverseBridge = async () => {
+    reverseBridgeServer = Bun.serve({
+      port: 0, // OS assigns available port
+      fetch: async (req) => {
+        // Verify auth
+        const auth = req.headers.get("x-omp-authorization") || req.headers.get("x-pi-vscode-authorization");
+        if (auth !== bridgeToken) {
+          return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "content-type": "application/json" } });
+        }
+
+        const url = new URL(req.url);
+
+        try {
+          switch (url.pathname) {
+            case "/health":
+              return Response.json({ ok: true, pid: process.pid });
+
+            case "/settings": {
+              if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+              const patch = await req.json();
+              if (!patch || typeof patch !== "object") return Response.json({ error: "Invalid body" }, { status: 400 });
+
+              const { settings } = pi.pi;
+              let applied = 0;
+              for (const [key, value] of Object.entries(patch)) {
+                settings.set(key, value);
+                applied++;
+              }
+              process.stderr.write(`[omp-bridge] Reverse bridge: applied ${applied} settings\n`);
+              return Response.json({ ok: true, applied });
+            }
+
+            case "/reload-commands": {
+              await pushSlashCommands();
+              return Response.json({ ok: true });
+            }
+
+            case "/get-settings": {
+              if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+              const { keys } = await req.json();
+              if (!Array.isArray(keys)) return Response.json({ error: "keys must be array" }, { status: 400 });
+              const { settings } = pi.pi;
+              const result = {};
+              for (const key of keys) {
+                result[key] = settings.get(key);
+              }
+              return Response.json(result);
+            }
+
+            default:
+              return Response.json({ error: "Not found" }, { status: 404 });
+          }
+        } catch (err) {
+          process.stderr.write(`[omp-bridge] Reverse bridge error: ${err?.message || err}\n`);
+          return Response.json({ error: err?.message || "Internal error" }, { status: 500 });
+        }
+      },
+    });
+
+    const port = reverseBridgeServer.port;
+    process.stderr.write(`[omp-bridge] Reverse bridge listening on port ${port}\n`);
+
+    // Tell extension host our port
+    try {
+      await callBridge("registerReverseBridge", { port });
+      process.stderr.write(`[omp-bridge] Reverse bridge registered with extension host\n`);
+    } catch (err) {
+      process.stderr.write(`[omp-bridge] Failed to register reverse bridge: ${err?.message || err}\n`);
+    }
+  };
+
   pi.on("session_start", async (_event, ctx) => {
     startStatusUpdates(ctx);
     await reportTerminalSession(ctx);
     await pushSlashCommands();
+    await startReverseBridge();
   });
 
   const persistUserAttachments = async () => {

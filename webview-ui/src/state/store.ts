@@ -204,6 +204,7 @@ interface AppState {
   slashCatalog: import("../../../src/protocol/webviewMessages").SlashCommandForWebview[];
   slashCatalogVersion: string;
   lastSlashResult?: { command: string; ok: boolean; message?: string; timestamp: number };
+  displaySettings: { hideThinkingBlock: boolean; showTokenUsage: boolean };
 
 }
 const initialState: AppState = {
@@ -245,6 +246,7 @@ const initialState: AppState = {
   slashCatalog: [],
   slashCatalogVersion: "0",
   lastSlashResult: undefined,
+  displaySettings: { hideThinkingBlock: false, showTokenUsage: false },
 
 };
 let state: AppState = { ...initialState };
@@ -439,6 +441,11 @@ export function removeTurn(turnId: string) {
       turns: turnTranscript.turns.filter(t => t.id !== turnId),
     },
   });
+}
+
+export function setDisplaySettings(settings: { hideThinkingBlock?: boolean; showTokenUsage?: boolean }) {
+  const current = state.displaySettings;
+  setState({ displaySettings: { ...current, ...settings } });
 }
 
 // ============================================================================

@@ -60,6 +60,16 @@
         "category": "OMP"
       },
       {
+        "command": "omp.openSettings",
+        "title": "Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "omp.showHistory",
+        "title": "History",
+        "icon": "$(history)"
+      },
+      {
         "command": "omp.newSession",
         "title": "OMP: New Session",
         "category": "OMP"
@@ -129,6 +139,18 @@
       ]
     },
     "menus": {
+      "view/title": [
+        {
+          "command": "omp.openSettings",
+          "when": "view == omp.chatView",
+          "group": "navigation@99"
+        },
+        {
+          "command": "omp.showHistory",
+          "when": "view == omp.chatView",
+          "group": "navigation@98"
+        }
+      ],
       "explorer/context": [
         {
           "command": "omp.addFileToChatContext",
