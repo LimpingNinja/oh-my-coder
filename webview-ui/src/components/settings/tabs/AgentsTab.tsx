@@ -3,6 +3,7 @@ import { getVSCodeAPI } from "../../../vscode";
 import { ModelReferencePicker, THINKING_LEVEL_OPTIONS } from "../ModelReferencePicker";
 import { useSettings } from "../SettingsContext";
 import { SettingsRow } from "../SettingsRow";
+import { DeleteConfirmOverlay } from "../DeleteConfirmOverlay";
 
 const SUB_TABS = ["Agents", "Delegation"] as const;
 type SubTab = (typeof SUB_TABS)[number];
@@ -143,6 +144,7 @@ function AgentsSubTab() {
   const { agents, config, draft, updateSetting } = useSettings();
   const [selectedAgent, setSelectedAgent] = useState<AgentDef | null>(null);
   const [newAgentScope, setNewAgentScope] = useState<"global" | "project" | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AgentDef | null>(null);
 
   const getOverrides = (): Record<string, string> => {
     const key = "task.agentModelOverrides";
@@ -213,9 +215,7 @@ function AgentsSubTab() {
 
   const deleteAgent = (agent: AgentDef) => {
     if (!agent.filePath || !canEditAgent(agent)) return;
-    const ok = window.confirm(`Delete agent "${agent.name}"?\n\n${agent.filePath}`);
-    if (!ok) return;
-    getVSCodeAPI().postMessage({ type: "settings.agent.delete", filePath: agent.filePath });
+    setPendingDelete(agent);
   };
 
   if (newAgentScope) {
@@ -250,22 +250,35 @@ function AgentsSubTab() {
   }
 
   return (
-    <AgentListView
-      agents={allAgents}
-      overrides={overrides}
-      disabledAgents={disabledAgents}
-      modelRoleNames={modelRoleNames}
-      onSelect={setSelectedAgent}
-      onCreate={setNewAgentScope}
-      onUpdateOverride={updateOverride}
-      onDelete={deleteAgent}
-      onToggleDisabled={(name, disabled) => {
-        const updated = disabled
-          ? [...disabledAgents, name]
-          : disabledAgents.filter((n) => n !== name);
-        updateSetting("task.disabledAgents", updated);
-      }}
-    />
+    <>
+      <AgentListView
+        agents={allAgents}
+        overrides={overrides}
+        disabledAgents={disabledAgents}
+        modelRoleNames={modelRoleNames}
+        onSelect={setSelectedAgent}
+        onCreate={setNewAgentScope}
+        onUpdateOverride={updateOverride}
+        onDelete={deleteAgent}
+        onToggleDisabled={(name, disabled) => {
+          const updated = disabled
+            ? [...disabledAgents, name]
+            : disabledAgents.filter((n) => n !== name);
+          updateSetting("task.disabledAgents", updated);
+        }}
+      />
+      {pendingDelete && (
+        <DeleteConfirmOverlay
+          type="agent"
+          name={pendingDelete.name}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            getVSCodeAPI().postMessage({ type: "settings.agent.delete", filePath: pendingDelete.filePath! });
+            setPendingDelete(null);
+          }}
+        />
+      )}
+    </>
   );
 }
 

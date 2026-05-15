@@ -2,6 +2,7 @@ import { useState } from "react";
 import { getVSCodeAPI } from "../../../vscode";
 import { useSettings, type DiscoveredSkill } from "../SettingsContext";
 import { SettingsRow } from "../SettingsRow";
+import { DeleteConfirmOverlay } from "../DeleteConfirmOverlay";
 
 const resolveKey = (source: Record<string, unknown>, key: string): unknown => {
   const parts = key.split(".");
@@ -25,13 +26,13 @@ const getSettingValue = (
   return resolveKey(config, key);
 };
 
-
 type SubTab = "detected" | "settings";
 
 export function SkillsTab() {
   const [subTab, setSubTab] = useState<SubTab>("detected");
   const [newSkillScope, setNewSkillScope] = useState<"global" | "project" | null>(null);
   const [filter, setFilter] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<DiscoveredSkill | null>(null);
   const { config, draft, updateSetting, skills } = useSettings();
 
   const get = (key: string) =>
@@ -47,12 +48,7 @@ export function SkillsTab() {
   });
 
   if (newSkillScope) {
-    return (
-      <SkillEditView
-        scope={newSkillScope}
-        onBack={() => setNewSkillScope(null)}
-      />
-    );
+    return <SkillEditView scope={newSkillScope} onBack={() => setNewSkillScope(null)} />;
   }
 
   return (
@@ -99,7 +95,7 @@ export function SkillsTab() {
             ) : (
               <div className="omp-settings-agent-overrides">
                 {filteredSkills.map((skill) => (
-                  <SkillRow key={skill.path} skill={skill} />
+                  <SkillRow key={skill.path} skill={skill} onDelete={setPendingDelete} />
                 ))}
               </div>
             )}
@@ -153,122 +149,211 @@ export function SkillsTab() {
           </div>
         )}
       </div>
+      {pendingDelete && (
+        <DeleteConfirmOverlay
+          type="skill"
+          name={pendingDelete.name}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            getVSCodeAPI().postMessage({ type: "settings.skill.delete", path: pendingDelete.path });
+            setPendingDelete(null);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function SkillEditView({
-  scope,
-  onBack,
-}: {
-  scope: "global" | "project";
-  onBack: () => void;
-}) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [globsText, setGlobsText] = useState("");
-  const [alwaysApply, setAlwaysApply] = useState(false);
-  const [content, setContent] = useState("");
+// ─── Skill Edit View ─────────────────────────────────────────────────────────
 
-  const saveSkill = () => {
-    const globs = globsText
-      .split(",")
-      .map((g) => g.trim())
-      .filter(Boolean);
+interface FrontmatterField {
+  key: string;
+  label: string;
+  type: "text" | "toggle" | "globs";
+  description: string;
+  placeholder?: string;
+}
+
+const AVAILABLE_FRONTMATTER: FrontmatterField[] = [
+  { key: "description", label: "Description", type: "text", description: "Short description shown in skill listings", placeholder: "What this skill does" },
+  { key: "globs", label: "File Globs", type: "globs", description: "Activate this skill for matching files (comma-separated)", placeholder: "**/*.ts, src/**/*.tsx" },
+  { key: "alwaysApply", label: "Always Apply", type: "toggle", description: "Include this skill in every conversation regardless of context" },
+];
+
+function SkillEditView({ scope, onBack }: { scope: "global" | "project"; onBack: () => void }) {
+  const [name, setName] = useState("");
+  const [content, setContent] = useState("");
+  const [activeFields, setActiveFields] = useState<Set<string>>(new Set(["description"]));
+  const [fieldValues, setFieldValues] = useState<Record<string, string | boolean>>({
+    description: "",
+    globs: "",
+    alwaysApply: false,
+  });
+
+  const toggleField = (key: string) => {
+    setActiveFields((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const updateField = (key: string, value: string | boolean) => {
+    setFieldValues((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const save = () => {
+    if (!name.trim()) return;
+    const globs = typeof fieldValues.globs === "string"
+      ? fieldValues.globs.split(",").map((g) => g.trim()).filter(Boolean)
+      : [];
+
     getVSCodeAPI().postMessage({
       type: "settings.skill.write",
       scope,
       skill: {
-        name,
-        description,
-        globs: globs.length > 0 ? globs : undefined,
-        alwaysApply: alwaysApply || undefined,
+        name: name.trim(),
+        description: activeFields.has("description") ? String(fieldValues.description || "") : undefined,
+        globs: activeFields.has("globs") && globs.length > 0 ? globs : undefined,
+        alwaysApply: activeFields.has("alwaysApply") && fieldValues.alwaysApply ? true : undefined,
         content,
       },
     });
     onBack();
   };
 
+  const inactiveFields = AVAILABLE_FRONTMATTER.filter((f) => !activeFields.has(f.key));
+
   return (
-    <div className="omp-settings-agent-edit">
+    <div className="omp-edit-form">
       <button onClick={onBack} className="omp-settings-back-btn">
         <i className="codicon codicon-arrow-left" /> Back to list
       </button>
-      <div className="omp-settings-agent-edit-heading">
-        <h3 className="omp-settings-agent-edit-title">New Skill</h3>
-        <span className={`omp-settings-agent-badge badge-${scope === "global" ? "global" : "project"}`}>
+
+      <div className="omp-edit-form-header">
+        <h3 className="omp-edit-form-title">New Skill</h3>
+        <span className={`omp-settings-agent-badge badge-${scope === "global" ? "user" : "project"}`}>
           {scope}
         </span>
       </div>
 
-      <div className="omp-settings-section">
-        <SettingsRow title="Name" description="Skill identifier (becomes the filename)">
-          <input
-            className="omp-settings-input"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="my-skill"
-          />
-        </SettingsRow>
-        <SettingsRow title="Description" description="Short description shown in skill listings">
-          <textarea
-            className="omp-settings-textarea"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="What this skill does"
-            rows={2}
-          />
-        </SettingsRow>
-        <SettingsRow title="Globs" description="Comma-separated file globs for activation (optional)">
-          <input
-            className="omp-settings-input"
-            value={globsText}
-            onChange={(e) => setGlobsText(e.target.value)}
-            placeholder="**/*.ts, src/**/*.tsx"
-          />
-        </SettingsRow>
-        <SettingsRow title="Always Apply" description="Apply this skill to every conversation" last>
-          <input
-            type="checkbox"
-            className="omp-settings-toggle"
-            checked={alwaysApply}
-            onChange={(e) => setAlwaysApply(e.target.checked)}
-          />
-        </SettingsRow>
-      </div>
-
-      <div className="omp-settings-section">
-        <label className="omp-settings-row-title">Content</label>
-        <textarea
-          className="omp-settings-textarea"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          rows={12}
-          placeholder="Skill instructions / command content..."
+      {/* Name field — always visible */}
+      <div className="omp-edit-form-field">
+        <label className="omp-edit-form-label">Name <span className="omp-edit-form-required">*</span></label>
+        <p className="omp-edit-form-hint">Becomes the filename (e.g. my-skill.md)</p>
+        <input
+          className="omp-edit-form-input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="my-skill"
         />
       </div>
 
-      <div className="omp-settings-agent-actions">
+      {/* Active frontmatter fields */}
+      <div className="omp-edit-form-section">
+        <div className="omp-edit-form-section-header">
+          <span className="omp-edit-form-section-title">Frontmatter</span>
+          {inactiveFields.length > 0 && (
+            <div className="omp-edit-form-add-field">
+              <select
+                className="omp-edit-form-add-select"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) toggleField(e.target.value);
+                  e.target.value = "";
+                }}
+              >
+                <option value="">+ Add field</option>
+                {inactiveFields.map((f) => (
+                  <option key={f.key} value={f.key}>{f.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {AVAILABLE_FRONTMATTER.filter((f) => activeFields.has(f.key)).map((field) => (
+          <div key={field.key} className="omp-edit-form-field">
+            <div className="omp-edit-form-field-header">
+              <label className="omp-edit-form-label">{field.label}</label>
+              <button
+                className="omp-edit-form-remove-btn"
+                onClick={() => toggleField(field.key)}
+                title="Remove field"
+              >
+                <i className="codicon codicon-close" />
+              </button>
+            </div>
+            <p className="omp-edit-form-hint">{field.description}</p>
+            {field.type === "text" && (
+              <input
+                className="omp-edit-form-input"
+                value={String(fieldValues[field.key] ?? "")}
+                onChange={(e) => updateField(field.key, e.target.value)}
+                placeholder={field.placeholder}
+              />
+            )}
+            {field.type === "globs" && (
+              <input
+                className="omp-edit-form-input"
+                value={String(fieldValues[field.key] ?? "")}
+                onChange={(e) => updateField(field.key, e.target.value)}
+                placeholder={field.placeholder}
+              />
+            )}
+            {field.type === "toggle" && (
+              <label className="omp-edit-form-toggle-row">
+                <input
+                  type="checkbox"
+                  className="omp-settings-toggle"
+                  checked={!!fieldValues[field.key]}
+                  onChange={(e) => updateField(field.key, e.target.checked)}
+                />
+                <span className="omp-edit-form-toggle-label">Enabled</span>
+              </label>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div className="omp-edit-form-field">
+        <label className="omp-edit-form-label">Content <span className="omp-edit-form-required">*</span></label>
+        <p className="omp-edit-form-hint">The skill instructions (markdown body after frontmatter)</p>
+        <textarea
+          className="omp-edit-form-textarea"
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          rows={14}
+          placeholder="Write the skill instructions here..."
+        />
+      </div>
+
+      {/* Save */}
+      <div className="omp-edit-form-actions">
         <button
-          className="omp-settings-btn-small"
-          onClick={saveSkill}
-          disabled={!name.trim() || !description.trim()}
+          className="omp-edit-form-save"
+          onClick={save}
+          disabled={!name.trim()}
         >
-          Save Skill
+          Create Skill
+        </button>
+        <button className="omp-edit-form-cancel" onClick={onBack}>
+          Cancel
         </button>
       </div>
     </div>
   );
 }
 
-function SkillRow({ skill }: { skill: DiscoveredSkill }) {
-  const canDelete = skill.location === "user" || skill.location === "project";
+// ─── Skill Row ───────────────────────────────────────────────────────────────
 
-  const deleteSkill = () => {
-    const ok = window.confirm(`Delete skill "${skill.name}"?\n\n${skill.path}`);
-    if (!ok) return;
-    getVSCodeAPI().postMessage({ type: "settings.skill.delete", path: skill.path });
-  };
+function SkillRow({ skill, onDelete }: { skill: DiscoveredSkill; onDelete: (skill: DiscoveredSkill) => void }) {
+  const canEdit = skill.location === "user" || skill.location === "project";
 
   return (
     <div className="omp-settings-agent-override-row omp-settings-agent-override-row--simple">
@@ -286,15 +371,15 @@ function SkillRow({ skill }: { skill: DiscoveredSkill }) {
               type="button"
               className="omp-settings-icon-btn"
               onClick={() => getVSCodeAPI().postMessage({ type: "openFile", path: skill.path })}
-              title="Open file"
+              title="Open in editor"
             >
               <i className="codicon codicon-go-to-file" />
             </button>
-            {canDelete && (
+            {canEdit && (
               <button
                 type="button"
                 className="omp-settings-icon-btn"
-                onClick={deleteSkill}
+                onClick={() => onDelete(skill)}
                 title="Delete skill"
               >
                 <i className="codicon codicon-trash" />
@@ -305,6 +390,9 @@ function SkillRow({ skill }: { skill: DiscoveredSkill }) {
         {skill.description && (
           <span className="omp-settings-agent-desc">{skill.description}</span>
         )}
+        <span className="omp-settings-agent-desc" style={{ fontFamily: "var(--vscode-editor-font-family, monospace)", fontSize: 10, opacity: 0.7 }}>
+          {skill.path}
+        </span>
       </div>
     </div>
   );

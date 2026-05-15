@@ -2,6 +2,7 @@ import { useState } from "react";
 import { getVSCodeAPI } from "../../../vscode";
 import { useSettings, type DiscoveredMcpServer } from "../SettingsContext";
 import { SettingsRow } from "../SettingsRow";
+import { DeleteConfirmOverlay } from "../DeleteConfirmOverlay";
 
 const resolveKey = (source: Record<string, unknown>, key: string): unknown => {
   const parts = key.split(".");
@@ -36,9 +37,19 @@ const STATUS_COLORS: Record<string, string> = {
   error: "var(--omp-error, #f44747)",
 };
 
+/** Returns true if the server comes from an OMP-managed config (editable). */
+function isOmpManaged(server: DiscoveredMcpServer): boolean {
+  const p = server.sourcePath;
+  if (p.includes(".omp/") || p.includes(".omp\\")) return true;
+  if (p.endsWith(".mcp.json")) return true;
+  return false;
+}
+
 export function McpTab() {
   const [subTab, setSubTab] = useState<SubTab>("Discovery");
   const [newServerScope, setNewServerScope] = useState<"global" | "project" | null>(null);
+  const [editingServer, setEditingServer] = useState<DiscoveredMcpServer | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<DiscoveredMcpServer | null>(null);
   const { config, draft, updateSetting, mcpServers } = useSettings();
 
   const get = (key: string) =>
@@ -50,13 +61,16 @@ export function McpTab() {
   const notificationsEnabled = getBool("mcp.notifications", false);
 
   const deleteServer = (server: DiscoveredMcpServer) => {
-    const ok = window.confirm(`Delete MCP server "${server.name}"?\n\nSource: ${server.sourcePath}`);
-    if (!ok) return;
-    // Determine scope from sourcePath: if it contains .omp/agent/mcp.json it's global, otherwise project
-    const scope = server.sourcePath.includes(".omp/agent/mcp.json") || server.sourcePath.includes(".omp\\agent\\mcp.json")
+    setPendingDelete(server);
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    const scope = pendingDelete.sourcePath.includes(".omp/agent/mcp.json") || pendingDelete.sourcePath.includes(".omp\\agent\\mcp.json")
       ? "global" as const
       : "project" as const;
-    getVSCodeAPI().postMessage({ type: "settings.mcp.delete", scope, name: server.name });
+    getVSCodeAPI().postMessage({ type: "settings.mcp.delete", scope, name: pendingDelete.name });
+    setPendingDelete(null);
   };
 
   if (newServerScope) {
@@ -64,6 +78,19 @@ export function McpTab() {
       <McpServerEditView
         scope={newServerScope}
         onBack={() => setNewServerScope(null)}
+      />
+    );
+  }
+
+  if (editingServer) {
+    const scope = editingServer.sourcePath.includes(".omp/agent/mcp.json") || editingServer.sourcePath.includes(".omp\\agent\\mcp.json")
+      ? "global" as const
+      : "project" as const;
+    return (
+      <McpServerEditView
+        scope={scope}
+        server={editingServer}
+        onBack={() => setEditingServer(null)}
       />
     );
   }
@@ -104,6 +131,7 @@ export function McpTab() {
                     <McpServerCard
                       key={`${server.name}-${server.sourcePath}`}
                       server={server}
+                      onEdit={setEditingServer}
                       onDelete={deleteServer}
                     />
                   ))}
@@ -183,6 +211,14 @@ export function McpTab() {
           </div>
         )}
       </div>
+      {pendingDelete && (
+        <DeleteConfirmOverlay
+          type="server"
+          name={pendingDelete.name}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={confirmDelete}
+        />
+      )}
     </div>
   );
 }
@@ -191,17 +227,41 @@ type McpServerType = "stdio" | "http" | "sse";
 
 function McpServerEditView({
   scope,
+  server,
   onBack,
 }: {
   scope: "global" | "project";
+  server?: DiscoveredMcpServer;
   onBack: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [serverType, setServerType] = useState<McpServerType>("stdio");
-  const [command, setCommand] = useState("");
-  const [argsText, setArgsText] = useState("");
-  const [url, setUrl] = useState("");
-  const [timeoutText, setTimeoutText] = useState("");
+  const cfg = (server?.config ?? {}) as Record<string, unknown>;
+  const initialType: McpServerType = server
+    ? (server.type as McpServerType) || "stdio"
+    : "stdio";
+
+  const [name, setName] = useState(server?.name ?? "");
+  const [serverType, setServerType] = useState<McpServerType>(initialType);
+  const [command, setCommand] = useState(String(cfg.command ?? ""));
+  const [argsText, setArgsText] = useState(
+    Array.isArray(cfg.args) ? (cfg.args as string[]).join(", ") : ""
+  );
+  const [envText, setEnvText] = useState(() => {
+    const env = cfg.env as Record<string, string> | undefined;
+    if (!env || typeof env !== "object") return "";
+    return Object.entries(env).map(([k, v]) => `${k}=${v}`).join("\n");
+  });
+  const [url, setUrl] = useState(String(cfg.url ?? ""));
+  const [headersText, setHeadersText] = useState(() => {
+    const headers = cfg.headers as Record<string, string> | undefined;
+    if (!headers || typeof headers !== "object") return "";
+    return Object.entries(headers).map(([k, v]) => `${k}=${v}`).join("\n");
+  });
+  const [timeoutText, setTimeoutText] = useState(
+    cfg.timeout ? String(cfg.timeout) : ""
+  );
+  const [enabled, setEnabled] = useState(server?.enabled ?? true);
+
+  const isEditing = !!server;
 
   const saveServer = () => {
     const args = argsText
@@ -209,6 +269,29 @@ function McpServerEditView({
       .map((a) => a.trim())
       .filter(Boolean);
     const timeout = timeoutText ? parseInt(timeoutText, 10) : undefined;
+
+    // Parse env from key=value lines
+    const env: Record<string, string> = {};
+    for (const line of envText.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx > 0) {
+        env[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
+      }
+    }
+
+    // Parse headers from key=value lines
+    const headers: Record<string, string> = {};
+    for (const line of headersText.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx > 0) {
+        headers[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
+      }
+    }
+
     getVSCodeAPI().postMessage({
       type: "settings.mcp.write",
       scope,
@@ -218,7 +301,10 @@ function McpServerEditView({
         command: serverType === "stdio" ? command : undefined,
         args: serverType === "stdio" && args.length > 0 ? args : undefined,
         url: serverType !== "stdio" ? url : undefined,
+        env: serverType === "stdio" && Object.keys(env).length > 0 ? env : undefined,
+        headers: serverType !== "stdio" && Object.keys(headers).length > 0 ? headers : undefined,
         timeout: timeout && timeout > 0 ? timeout : undefined,
+        enabled,
       },
     });
     onBack();
@@ -232,21 +318,25 @@ function McpServerEditView({
         <i className="codicon codicon-arrow-left" /> Back to list
       </button>
       <div className="omp-settings-agent-edit-heading">
-        <h3 className="omp-settings-agent-edit-title">New MCP Server</h3>
+        <h3 className="omp-settings-agent-edit-title">
+          {isEditing ? server.name : "New MCP Server"}
+        </h3>
         <span className={`omp-settings-agent-badge badge-${scope === "global" ? "global" : "project"}`}>
           {scope}
         </span>
       </div>
 
       <div className="omp-settings-section">
-        <SettingsRow title="Server Name" description="Identifier for this MCP server">
-          <input
-            className="omp-settings-input"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="my-server"
-          />
-        </SettingsRow>
+        {!isEditing && (
+          <SettingsRow title="Server Name" description="Identifier for this MCP server">
+            <input
+              className="omp-settings-input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="my-server"
+            />
+          </SettingsRow>
+        )}
         <SettingsRow title="Type" description="Transport protocol">
           <select
             className="omp-settings-select"
@@ -277,27 +367,55 @@ function McpServerEditView({
                 placeholder="--port, 3000"
               />
             </SettingsRow>
+            <SettingsRow title="Environment Variables" description="One KEY=VALUE per line">
+              <textarea
+                className="omp-settings-textarea"
+                value={envText}
+                onChange={(e) => setEnvText(e.target.value)}
+                placeholder={"API_KEY=xxx\nNODE_ENV=production"}
+                rows={3}
+              />
+            </SettingsRow>
           </>
         )}
 
         {serverType !== "stdio" && (
-          <SettingsRow title="URL" description="Server endpoint URL">
-            <input
-              className="omp-settings-input"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="http://localhost:3000/mcp"
-            />
-          </SettingsRow>
+          <>
+            <SettingsRow title="URL" description="Server endpoint URL">
+              <input
+                className="omp-settings-input"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="http://localhost:3000/mcp"
+              />
+            </SettingsRow>
+            <SettingsRow title="Headers" description="One KEY=VALUE per line">
+              <textarea
+                className="omp-settings-textarea"
+                value={headersText}
+                onChange={(e) => setHeadersText(e.target.value)}
+                placeholder={"Authorization=Bearer xxx"}
+                rows={3}
+              />
+            </SettingsRow>
+          </>
         )}
 
-        <SettingsRow title="Timeout" description="Connection timeout in seconds (optional)" last>
+        <SettingsRow title="Timeout" description="Connection timeout in seconds (optional)">
           <input
             className="omp-settings-input"
             type="number"
             value={timeoutText}
             onChange={(e) => setTimeoutText(e.target.value)}
             placeholder="30"
+          />
+        </SettingsRow>
+        <SettingsRow title="Enabled" description="Enable or disable this server" last>
+          <input
+            type="checkbox"
+            className="omp-settings-toggle"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
           />
         </SettingsRow>
       </div>
@@ -308,7 +426,7 @@ function McpServerEditView({
           onClick={saveServer}
           disabled={!isValid}
         >
-          Save Server
+          {isEditing ? "Save Changes" : "Save Server"}
         </button>
       </div>
     </div>
@@ -317,9 +435,11 @@ function McpServerEditView({
 
 function McpServerCard({
   server,
+  onEdit,
   onDelete,
 }: {
   server: DiscoveredMcpServer;
+  onEdit: (server: DiscoveredMcpServer) => void;
   onDelete: (server: DiscoveredMcpServer) => void;
 }) {
   const statusColor = STATUS_COLORS[server.status] ?? STATUS_COLORS.configured;
@@ -328,8 +448,7 @@ function McpServerCard({
     ? [cfg.command, ...((cfg.args as string[]) ?? [])].join(" ")
     : (cfg.url as string) ?? "";
 
-  // Only show delete for servers from our managed config files
-  const canDelete = server.sourcePath.endsWith("mcp.json");
+  const managed = isOmpManaged(server);
 
   // Derive source badge
   const sourceLevel = server.source.toLowerCase().includes("project") ? "project" : "user";
@@ -351,31 +470,27 @@ function McpServerCard({
             {sourceLevel.toUpperCase()}
           </span>
           <div className="omp-settings-agent-row-actions">
-            <button
-              type="button"
-              className="omp-settings-icon-btn"
-              onClick={() => getVSCodeAPI().postMessage({ type: "settings.openConfigFile" })}
-              title="Open config"
-            >
-              <i className="codicon codicon-edit" />
-            </button>
-            <button
-              type="button"
-              className="omp-settings-icon-btn"
-              onClick={() => getVSCodeAPI().postMessage({ type: "openFile", path: server.sourcePath })}
-              title="Open source file"
-            >
-              <i className="codicon codicon-go-to-file" />
-            </button>
-            {canDelete && (
-              <button
-                type="button"
-                className="omp-settings-icon-btn"
-                onClick={() => onDelete(server)}
-                title="Delete server"
-              >
-                <i className="codicon codicon-trash" />
-              </button>
+            {managed ? (
+              <>
+                <button
+                  type="button"
+                  className="omp-settings-icon-btn"
+                  onClick={() => onEdit(server)}
+                  title="Edit server"
+                >
+                  <i className="codicon codicon-edit" />
+                </button>
+                <button
+                  type="button"
+                  className="omp-settings-icon-btn"
+                  onClick={() => onDelete(server)}
+                  title="Delete server"
+                >
+                  <i className="codicon codicon-trash" />
+                </button>
+              </>
+            ) : (
+              <span className="omp-mcp-autodiscovered-badge">Auto-discovered</span>
             )}
           </div>
         </div>

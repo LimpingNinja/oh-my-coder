@@ -5167,6 +5167,189 @@ body {
   cursor: default;
 }
 
+/* ─── Edit Form (Skills, MCP creation/edit) ─── */
+.omp-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.omp-edit-form-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.omp-edit-form-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.omp-edit-form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 60%, transparent);
+  border-radius: 6px;
+  padding: 14px;
+}
+
+.omp-edit-form-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.omp-edit-form-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.omp-edit-form-add-select {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+}
+
+.omp-edit-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.omp-edit-form-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.omp-edit-form-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.omp-edit-form-required {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.omp-edit-form-hint {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.omp-edit-form-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-size: 13px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.omp-edit-form-input:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.omp-edit-form-textarea {
+  width: 100%;
+  min-height: 180px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-size: 13px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.omp-edit-form-textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.omp-edit-form-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.omp-edit-form-toggle-label {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.omp-edit-form-remove-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.omp-edit-form-remove-btn:hover {
+  opacity: 1;
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.omp-edit-form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.omp-edit-form-save {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 4px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.omp-edit-form-save:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.omp-edit-form-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.omp-edit-form-cancel {
+  padding: 6px 16px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.omp-edit-form-cancel:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
 .omp-settings-agent-tools {
   display: flex;
   flex-wrap: wrap;
@@ -5564,4 +5747,14 @@ body {
 .omp-settings-agent-badge.badge-sse {
   background: color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 20%, transparent);
   color: var(--vscode-charts-blue, #4fc1ff);
+}
+
+.omp-mcp-autodiscovered-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--vscode-descriptionForeground, #888) 15%, transparent);
+  color: var(--vscode-descriptionForeground, #888);
+  font-style: italic;
+  white-space: nowrap;
 }
