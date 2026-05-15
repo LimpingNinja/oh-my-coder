@@ -31,6 +31,7 @@ type SubTab = "detected" | "settings";
 export function SkillsTab() {
   const [subTab, setSubTab] = useState<SubTab>("detected");
   const [newSkillScope, setNewSkillScope] = useState<"global" | "project" | null>(null);
+  const [editingSkill, setEditingSkill] = useState<DiscoveredSkill | null>(null);
   const [filter, setFilter] = useState("");
   const [pendingDelete, setPendingDelete] = useState<DiscoveredSkill | null>(null);
   const { config, draft, updateSetting, skills } = useSettings();
@@ -46,6 +47,16 @@ export function SkillsTab() {
     const q = filter.toLowerCase();
     return s.name.toLowerCase().includes(q) || (s.description ?? "").toLowerCase().includes(q);
   });
+
+  if (editingSkill) {
+    return (
+      <SkillEditView
+        scope={editingSkill.location === "project" ? "project" : "global"}
+        existing={editingSkill}
+        onBack={() => setEditingSkill(null)}
+      />
+    );
+  }
 
   if (newSkillScope) {
     return <SkillEditView scope={newSkillScope} onBack={() => setNewSkillScope(null)} />;
@@ -95,7 +106,7 @@ export function SkillsTab() {
             ) : (
               <div className="omp-settings-agent-overrides">
                 {filteredSkills.map((skill) => (
-                  <SkillRow key={skill.path} skill={skill} onDelete={setPendingDelete} />
+                  <SkillRow key={skill.path} skill={skill} onEdit={setEditingSkill} onDelete={setPendingDelete} />
                 ))}
               </div>
             )}
@@ -180,12 +191,22 @@ const AVAILABLE_FRONTMATTER: FrontmatterField[] = [
   { key: "alwaysApply", label: "Always Apply", type: "toggle", description: "Include this skill in every conversation regardless of context" },
 ];
 
-function SkillEditView({ scope, onBack }: { scope: "global" | "project"; onBack: () => void }) {
-  const [name, setName] = useState("");
+function SkillEditView({
+  scope,
+  existing,
+  onBack,
+}: {
+  scope: "global" | "project";
+  existing?: DiscoveredSkill;
+  onBack: () => void;
+}) {
+  const [name, setName] = useState(existing?.name ?? "");
   const [content, setContent] = useState("");
-  const [activeFields, setActiveFields] = useState<Set<string>>(new Set(["description"]));
+  const [activeFields, setActiveFields] = useState<Set<string>>(
+    new Set(existing?.description ? ["description"] : ["description"])
+  );
   const [fieldValues, setFieldValues] = useState<Record<string, string | boolean>>({
-    description: "",
+    description: existing?.description ?? "",
     globs: "",
     alwaysApply: false,
   });
@@ -352,7 +373,7 @@ function SkillEditView({ scope, onBack }: { scope: "global" | "project"; onBack:
 
 // ─── Skill Row ───────────────────────────────────────────────────────────────
 
-function SkillRow({ skill, onDelete }: { skill: DiscoveredSkill; onDelete: (skill: DiscoveredSkill) => void }) {
+function SkillRow({ skill, onEdit, onDelete }: { skill: DiscoveredSkill; onEdit: (s: DiscoveredSkill) => void; onDelete: (s: DiscoveredSkill) => void }) {
   const canEdit = skill.location === "user" || skill.location === "project";
 
   return (
@@ -367,6 +388,16 @@ function SkillRow({ skill, onDelete }: { skill: DiscoveredSkill; onDelete: (skil
             {skill.location === "user" ? "USER" : "PROJECT"}
           </span>
           <div className="omp-settings-agent-row-actions">
+            {canEdit && (
+              <button
+                type="button"
+                className="omp-settings-icon-btn"
+                onClick={() => onEdit(skill)}
+                title="Edit skill"
+              >
+                <i className="codicon codicon-edit" />
+              </button>
+            )}
             <button
               type="button"
               className="omp-settings-icon-btn"
