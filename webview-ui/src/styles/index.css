@@ -4537,6 +4537,19 @@ body {
   border-left-color: var(--vscode-focusBorder);
 }
 
+.omp-settings-tab-icon-svg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.omp-settings-tab-icon-svg svg {
+  width: 16px;
+  height: 16px;
+}
+
 .omp-settings-content {
   flex: 1;
   overflow-y: auto;
