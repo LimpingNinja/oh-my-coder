@@ -5433,6 +5433,15 @@ body {
   color: var(--vscode-descriptionForeground);
   font-style: italic;
 }
+
+.omp-settings-icon-btn--spin i {
+  animation: omp-spin 1s linear infinite;
+}
+
+@keyframes omp-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 .omp-agent-tool-tag:disabled {
   opacity: 0.5;
   cursor: not-allowed;

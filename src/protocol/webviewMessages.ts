@@ -252,7 +252,8 @@ export type WebviewToExtensionMessage =
         timeout?: number;
       };
     }
-  | { type: "settings.mcp.delete"; scope: "global" | "project"; name: string };
+  | { type: "settings.mcp.delete"; scope: "global" | "project"; name: string }
+  | { type: "settings.mcp.reload" };
 
 // ============================================================================
 // Extension → Webview messages
@@ -580,6 +581,7 @@ const webviewToExtensionTypes = new Set<string>([
   "settings.skill.delete",
   "settings.mcp.write",
   "settings.mcp.delete",
+  "settings.mcp.reload",
 ]);
 
 const extensionToWebviewTypes = new Set<string>([

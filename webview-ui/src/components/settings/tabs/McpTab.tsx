@@ -50,6 +50,7 @@ export function McpTab() {
   const [newServerScope, setNewServerScope] = useState<"global" | "project" | null>(null);
   const [editingServer, setEditingServer] = useState<DiscoveredMcpServer | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DiscoveredMcpServer | null>(null);
+  const [reloading, setReloading] = useState(false);
   const { config, draft, updateSetting, mcpServers } = useSettings();
 
   const get = (key: string) =>
@@ -115,9 +116,14 @@ export function McpTab() {
               <div className="omp-settings-section-header-row">
                 <h3 className="omp-settings-section-title">Discovered Servers</h3>
                 <button
-                  className="omp-settings-icon-btn"
-                  onClick={() => getVSCodeAPI().postMessage({ type: "settings.load" })}
+                  className={`omp-settings-icon-btn${reloading ? " omp-settings-icon-btn--spin" : ""}`}
+                  onClick={() => {
+                    setReloading(true);
+                    getVSCodeAPI().postMessage({ type: "settings.mcp.reload" });
+                    setTimeout(() => setReloading(false), 3000);
+                  }}
                   title="Reload MCP servers"
+                  disabled={reloading}
                 >
                   <i className="codicon codicon-refresh" />
                 </button>

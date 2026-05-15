@@ -613,7 +613,7 @@ export default function (pi) {
                       return {
                         name,
                         type: cfg.type || (cfg.command ? "stdio" : cfg.url ? "http" : "stdio"),
-                        status: mgr?.getConnectionStatus?.(name) ?? "configured",
+                        status: mgr?.getConnectionStatus?.(name) ?? "disconnected",
                         enabled: cfg.enabled !== false,
                         source: src?.level || "user",
                         sourcePath: src?.path || "",

@@ -1533,6 +1533,35 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       })();
       break;
 
+
+    case "settings.mcp.reload":
+      outputChannel.appendLine("[omp] settings.mcp.reload");
+      void (async () => {
+        try {
+          await callReverseBridge("/mcp-reload");
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          outputChannel.appendLine(`[omp] MCP reload error: ${msg}`);
+        }
+      })();
+      break;
     case "settings.omc.load": {
       const ompPath = vscode.workspace.getConfiguration("omp").get<string>("path") ?? "";
       const payload = { type: "settings.omc.loaded" as const, settings: { path: ompPath } };
