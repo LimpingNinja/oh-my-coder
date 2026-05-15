@@ -235,6 +235,7 @@ export type WebviewToExtensionMessage =
         description: string;
         globs?: string[];
         alwaysApply?: boolean;
+        allowedTools?: string[];
         content: string;
       };
     }

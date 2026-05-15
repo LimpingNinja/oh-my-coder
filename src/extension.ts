@@ -379,6 +379,7 @@ interface EditableSkillPayload {
   description: string;
   globs?: string[];
   alwaysApply?: boolean;
+  allowedTools?: string[];
   content: string;
 }
 
@@ -401,6 +402,7 @@ function skillMarkdown(skill: EditableSkillPayload): string {
   };
   if (skill.globs && skill.globs.length > 0) frontmatter.globs = skill.globs;
   if (skill.alwaysApply) frontmatter.alwaysApply = true;
+  if (skill.allowedTools && skill.allowedTools.length > 0) frontmatter["allowed-tools"] = skill.allowedTools;
   const yaml = stringifyYaml(frontmatter).trimEnd();
   return `---\n${yaml}\n---\n${skill.content.trimEnd()}\n`;
 }

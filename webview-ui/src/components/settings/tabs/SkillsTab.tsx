@@ -195,6 +195,15 @@ const AVAILABLE_FRONTMATTER: FrontmatterField[] = [
   { key: "disable-model-invocation", label: "Disable Model Invocation", type: "toggle", description: "Hide from system prompt; only available via explicit /skill:name command" },
 ];
 
+const ALL_TOOL_NAMES = [
+  "read", "search", "find", "edit", "write", "bash",
+  "ast_grep", "ast_edit", "lsp", "debug", "eval",
+  "browser", "web_search", "fetch", "github",
+  "task", "irc", "recipe", "checkpoint", "notebook",
+  "render_mermaid", "inspect_image", "calc", "generate_image",
+  "todo_write", "question", "yield",
+];
+
 function SkillEditView({
   scope,
   existing,
@@ -236,6 +245,9 @@ function SkillEditView({
     const globs = typeof fieldValues.globs === "string"
       ? fieldValues.globs.split(",").map((g) => g.trim()).filter(Boolean)
       : [];
+    const allowedToolsRaw = typeof fieldValues["allowed-tools"] === "string"
+      ? fieldValues["allowed-tools"].split(/[\s,]+/).filter(Boolean)
+      : [];
 
     getVSCodeAPI().postMessage({
       type: "settings.skill.write",
@@ -245,6 +257,7 @@ function SkillEditView({
         description: activeFields.has("description") ? String(fieldValues.description || "") : undefined,
         globs: activeFields.has("globs") && globs.length > 0 ? globs : undefined,
         alwaysApply: activeFields.has("alwaysApply") && fieldValues.alwaysApply ? true : undefined,
+        allowedTools: activeFields.has("allowed-tools") && allowedToolsRaw.length > 0 ? allowedToolsRaw : undefined,
         content,
       },
     });
@@ -342,12 +355,27 @@ function SkillEditView({
               </label>
             )}
             {field.type === "tools" && (
-              <input
-                className="omp-edit-form-input"
-                value={String(fieldValues[field.key] ?? "")}
-                onChange={(e) => updateField(field.key, e.target.value)}
-                placeholder={field.placeholder}
-              />
+              <div className="omp-agent-tools-tags">
+                {ALL_TOOL_NAMES.map((tool) => {
+                  const currentVal = String(fieldValues[field.key] ?? "");
+                  const selected = new Set(currentVal.split(/[\s,]+/).filter(Boolean));
+                  const isActive = selected.has(tool);
+                  return (
+                    <button
+                      key={tool}
+                      type="button"
+                      className={`omp-agent-tool-tag${isActive ? " omp-agent-tool-tag--active" : ""}`}
+                      onClick={() => {
+                        const next = new Set(selected);
+                        if (isActive) next.delete(tool); else next.add(tool);
+                        updateField(field.key, Array.from(next).join(" "));
+                      }}
+                    >
+                      {tool}
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
         ))}
