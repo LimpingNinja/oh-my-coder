@@ -91,6 +91,28 @@ export interface BridgeState {
   reportTerminalSession(terminalId: string, sessionFile: string): void;
   getTurnMetadata(): TurnMetadataSnapshot;
   getUserAttachments(): UserAttachmentsSnapshot | null;
-  onCommandsDiscovered?: (commands: Array<{ name: string; description?: string; source: string; location?: string; path?: string }>) => void;
+  onCommandsDiscovered?: (
+    commands: Array<{
+      name: string;
+      description?: string;
+      source: string;
+      location?: string;
+      path?: string;
+    }>,
+  ) => void;
+  onAgentsDiscovered?: (
+    agents: Array<{
+      name: string;
+      description: string;
+      systemPrompt: string;
+      tools?: string[];
+      spawns?: string[] | "*";
+      model?: string | string[];
+      thinkingLevel?: string;
+      source: string;
+      filePath?: string;
+    }>,
+  ) => void;
   reverseBridgePort?: number;
+  onReverseBridgeRegistered?: (port: number) => void;
 }

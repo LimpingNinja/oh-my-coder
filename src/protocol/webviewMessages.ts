@@ -28,6 +28,20 @@ export interface ModelRef {
   modelId: string;
 }
 
+/** Provider configuration/auth status as reported by the reverse bridge. */
+export interface ProviderStatusEntry {
+  id: string;
+  name: string;
+  authMethod: "apiKey" | "oauth" | "none";
+  envVars: string[];
+  envVarsSet: Record<string, boolean>;
+  hasConfigKey: boolean;
+  hasConfigBaseUrl: boolean;
+  configured: boolean;
+  modelsAvailable: number;
+}
+
+
 /** Attachment alongside a chat message (future: images, files, etc.). */
 export interface ChatAttachment {
   type: "image";
@@ -166,7 +180,11 @@ export type WebviewToExtensionMessage =
   /** Respond to an extension UI request from the runtime.
    *  The response payload is a bare object ({ value, confirmed, or cancelled })
    *  without the transport `type`/`id` fields — the host stamps those before sending to stdin. */
-  | { type: "extensionUi.respond"; requestId: string; response: { value: string } | { confirmed: boolean } | { cancelled: true } }
+  | {
+      type: "extensionUi.respond";
+      requestId: string;
+      response: { value: string } | { confirmed: boolean } | { cancelled: true };
+    }
 
   // ── Focus ────────────────────────────────────────────────────────────
   /** Focus was requested (e.g. via command palette). */
@@ -192,7 +210,23 @@ export type WebviewToExtensionMessage =
   /** Discard settings draft. */
   | { type: "settings.discard" }
   /** Open config.yml in VS Code editor. */
-  | { type: "settings.openConfigFile"; scope?: "global" | "project" };
+  | { type: "settings.openConfigFile"; scope?: "global" | "project" }
+  | {
+      type: "settings.agent.write";
+      scope: "global" | "project";
+      filePath?: string;
+      agent: {
+        name: string;
+        description: string;
+        systemPrompt: string;
+        tools?: string[];
+        model?: string | string[];
+        thinkingLevel?: string;
+      };
+    }
+  | { type: "settings.agent.delete"; filePath: string }
+  | { type: "settings.omc.load" }
+  | { type: "settings.omc.save"; settings: { path?: string | null } };
 
 // ============================================================================
 // Extension → Webview messages
@@ -248,7 +282,12 @@ export type ExtensionToWebviewMessage =
 
   // ── Runtime ─────────────────────────────────────────────────────────
   | { type: "runtime.state"; sessionPath?: string; state: OmpRuntimeState }
-  | { type: "runtime.availableModels"; models: OmpAvailableModel[]; source?: "runtime" | "cache" | "refresh"; updatedAt?: number }
+  | {
+      type: "runtime.availableModels";
+      models: OmpAvailableModel[];
+      source?: "runtime" | "cache" | "refresh";
+      updatedAt?: number;
+    }
   | { type: "runtime.modelCatalog"; entries: import("../models/catalog.ts").CatalogEntry[] }
   /** Forward a raw OMP RPC frame to the webview for transcript rendering. */
   | { type: "runtime.frame"; sessionPath?: string; frame: OmpRpcFrameForWebview }
@@ -259,14 +298,26 @@ export type ExtensionToWebviewMessage =
   // ── Chat ─────────────────────────────────────────────────────────────
   | { type: "chat.message"; sessionPath: string; message: ChatMessageForWebview }
   | { type: "chat.delta"; sessionPath: string; messageId: string; delta: ChatDelta }
-  | { type: "chat.messagesLoaded"; sessionPath: string; messages: ChatMessageForWebview[]; turnMetadataEntries?: TurnMetadataPayload[] }
+  | {
+      type: "chat.messagesLoaded";
+      sessionPath: string;
+      messages: ChatMessageForWebview[];
+      turnMetadataEntries?: TurnMetadataPayload[];
+    }
   | { type: "chat.queued"; behavior: "steer" | "followUp"; content: string }
 
   // ── Header/footer/status ─────────────────────────────────────────────
   | { type: "header.state"; state: ChatHeaderState }
   | { type: "header.todos"; todos: OmpTodoPhase[] }
   | { type: "footer.state"; items: ChatFooterItem[] }
-  | { type: "footer.modes"; steeringMode: string; followUpMode: string; interruptMode: string; activeRole?: string; availableRoles?: string[] }
+  | {
+      type: "footer.modes";
+      steeringMode: string;
+      followUpMode: string;
+      interruptMode: string;
+      activeRole?: string;
+      availableRoles?: string[];
+    }
   | { type: "footer.thinkingSupport"; supported: boolean; minLevel?: string; maxLevel?: string }
 
   // ── Extension UI request ─────────────────────────────────────────────
@@ -292,9 +343,44 @@ export type ExtensionToWebviewMessage =
     }
   // ── Settings panel ────────────────────────────────────────────────────
   /** Full config snapshot delivered to settings panel. */
-  | { type: "settings.loaded"; config: Record<string, unknown>; runtimeState?: Record<string, unknown> }
+  | {
+      type: "settings.loaded";
+      config: Record<string, unknown>;
+      agents?: Array<{
+        name: string;
+        description: string;
+        systemPrompt: string;
+        tools?: string[];
+        spawns?: string[] | "*";
+        model?: string | string[];
+        thinkingLevel?: string;
+        source: string;
+        filePath?: string;
+      }>;
+      runtimeState?: Record<string, unknown>;
+      bridgeAvailable?: boolean;
+      providerStatus?: ProviderStatusEntry[];
+      skills?: Array<{
+        name: string;
+        description: string;
+        source: string;
+        location: string;
+        path: string;
+      }>;
+      mcpServers?: Array<{
+        name: string;
+        type: string;
+        status: string;
+        enabled: boolean;
+        source: string;
+        sourcePath: string;
+        config: Record<string, unknown>;
+      }>;
+    }
   /** Config saved successfully. */
-  | { type: "settings.updated"; config: Record<string, unknown> }
+  | { type: "settings.updated"; config: Record<string, unknown>; providerStatus?: ProviderStatusEntry[]; skills?: Array<{ name: string; description: string; source: string; location: string; path: string }>; mcpServers?: Array<{ name: string; type: string; status: string; enabled: boolean; source: string; sourcePath: string; config: Record<string, unknown> }> }
+  | { type: "settings.omc.loaded"; settings: { path: string } }
+  | { type: "settings.omc.updated" }
   /** Config save failed. */
   | { type: "settings.updateFailed"; message: string; details?: string }
   /** Navigate webview to settings panel with optional tab. */
@@ -460,6 +546,10 @@ const webviewToExtensionTypes = new Set<string>([
   "settings.save",
   "settings.discard",
   "settings.openConfigFile",
+  "settings.agent.write",
+  "settings.agent.delete",
+  "settings.omc.load",
+  "settings.omc.save",
 ]);
 
 const extensionToWebviewTypes = new Set<string>([
@@ -494,4 +584,6 @@ const extensionToWebviewTypes = new Set<string>([
   "settings.updateFailed",
   "settings.navigate",
   "display.settings",
+  "settings.omc.loaded",
+  "settings.omc.updated",
 ]);

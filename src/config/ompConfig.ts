@@ -205,20 +205,27 @@ export function expandDotPaths(flat: Record<string, unknown>): Record<string, un
 }
 
 /**
- * Deep-merge source into target (mutates target). Arrays are replaced, not merged.
+ * Deep-merge source into target (mutates target).
+ * Arrays are replaced, not merged.
+ * At depth >= 2, objects are replaced wholesale to support collection deletion semantics.
  */
-function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>, depth = 0): Record<string, unknown> {
   for (const key of Object.keys(source)) {
     if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     const srcVal = source[key];
-    const tgtVal = target[key];
-    if (
-      srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) &&
-      tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)
-    ) {
-      deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
+    if (srcVal === null) {
+      delete target[key];
     } else {
-      target[key] = srcVal;
+      const tgtVal = target[key];
+      if (
+        depth < 2 &&
+        typeof srcVal === "object" && !Array.isArray(srcVal) &&
+        tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)
+      ) {
+        deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>, depth + 1);
+      } else {
+        target[key] = srcVal;
+      }
     }
   }
   return target;
@@ -243,6 +250,15 @@ export async function writeOmpConfig(patch: Record<string, unknown>): Promise<Om
   }
 
   const expanded = expandDotPaths(patch);
+  for (const [key, value] of Object.entries(patch)) {
+    if (key.includes(".") || !(key in expanded)) continue;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+    const values = Object.values(value as Record<string, unknown>);
+    const isFlatRecord = values.every((entry) => entry === null || typeof entry !== "object");
+    if (!isFlatRecord) continue;
+    existing[key] = expanded[key];
+    delete expanded[key];
+  }
   deepMerge(existing, expanded);
 
   const yaml = stringifyYaml(existing);

@@ -25,7 +25,29 @@ export async function createBridge(
   onTerminalSession?: (terminalId: string, sessionFile: string) => void,
   onGetTurnMetadata?: () => TurnMetadataSnapshot,
   onGetUserAttachments?: () => import("./types.ts").UserAttachmentsSnapshot | null,
-  onCommandsDiscovered?: (commands: Array<{ name: string; description?: string; source: string; location?: string; path?: string }>) => void,
+  onCommandsDiscovered?: (
+    commands: Array<{
+      name: string;
+      description?: string;
+      source: string;
+      location?: string;
+      path?: string;
+    }>,
+  ) => void,
+  onAgentsDiscovered?: (
+    agents: Array<{
+      name: string;
+      description: string;
+      systemPrompt: string;
+      tools?: string[];
+      spawns?: string[] | "*";
+      model?: string | string[];
+      thinkingLevel?: string;
+      source: string;
+      filePath?: string;
+    }>,
+  ) => void,
+  onReverseBridgeRegistered?: (port: number) => void,
 ): Promise<BridgeContext> {
   const state = createBridgeState(
     captureSelection(vscode.window.activeTextEditor),
@@ -35,6 +57,12 @@ export async function createBridge(
   );
   if (onCommandsDiscovered) {
     state.onCommandsDiscovered = onCommandsDiscovered;
+  }
+  if (onAgentsDiscovered) {
+    state.onAgentsDiscovered = onAgentsDiscovered;
+  }
+  if (onReverseBridgeRegistered) {
+    state.onReverseBridgeRegistered = onReverseBridgeRegistered;
   }
   const dirtyState = new Map<string, boolean>();
   const token = randomUUID();
@@ -148,7 +176,9 @@ export async function createBridge(
   return {
     server,
     token,
-    get reverseBridgePort() { return state.reverseBridgePort; },
+    get reverseBridgePort() {
+      return state.reverseBridgePort;
+    },
     url: `http://127.0.0.1:${address.port}`,
     dispose: async () => {
       await new Promise<void>((resolve, reject) => {

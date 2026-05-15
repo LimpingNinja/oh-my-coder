@@ -2,7 +2,9 @@ import { createBridge } from "./bridge/server.ts";
 import type { BridgeContext } from "./bridge/types.ts";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import * as os from "node:os";
 import * as vscode from "vscode";
+import { stringify as stringifyYaml } from "yaml";
 import { findOmpBinary, createOmpEnvironment } from "./omp.ts";
 import { OmpChatProvider } from "./webview/provider.ts";
 import type {
@@ -11,15 +13,24 @@ import type {
   ChatFileContext,
   WebviewToExtensionMessage,
   OmpLaunchState,
+  ProviderStatusEntry,
 } from "./protocol/webviewMessages.ts";
 import { EMPTY_HEADER_STATE } from "./protocol/footerTypes.ts";
 import type { ChatHeaderState, ChatFooterItem } from "./protocol/footerTypes.ts";
 import { listWorkspaceSessions, validateResumePath } from "./session/discovery.ts";
-import { resolveWorkspaceScope, getEffectiveWorkspaceFolder, getOmpSessionDir } from "./session/workspaceScope.ts";
+import {
+  resolveWorkspaceScope,
+  getEffectiveWorkspaceFolder,
+  getOmpSessionDir,
+} from "./session/workspaceScope.ts";
 import type { OmpSessionListState, OmpSessionSummary } from "./session/types.ts";
 import { OmpRpcControllerImpl } from "./rpc/controller.ts";
 import type { OmpLaunchRequest } from "./rpc/types.ts";
-import type { OmpAvailableModel, OmpRuntimeState, OmpStatePayload } from "./protocol/ompRpcTypes.ts";
+import type {
+  OmpAvailableModel,
+  OmpRuntimeState,
+  OmpStatePayload,
+} from "./protocol/ompRpcTypes.ts";
 import {
   OmpResumePathError,
   OmpStartupError,
@@ -28,12 +39,19 @@ import {
 } from "./rpc/errors.ts";
 import { TranscriptManager } from "./transcript/manager.ts";
 import { readHydrationFromJsonl } from "./transcript/turnMetadataReader.ts";
-import { refreshCatalog, loadFromDisk, getCatalogEntries, isExpired, hasCatalog } from "./models/catalog.ts";
+import { refreshCatalog, loadFromDisk, getCatalogEntries, isExpired } from "./models/catalog.ts";
 import { parseSlashInput, mergeSlashCatalog, resolveSlashCommand } from "./slash/registry.ts";
 import { SlashDispatcher } from "./slash/dispatcher.ts";
 import type { RuntimeDiscoveredCommand, SlashCommand } from "./slash/types.ts";
 import { expandCommand } from "./slash/expander.ts";
-import { getOmpConfig, refreshOmpConfig, resolveAgentDir, writeOmpConfig, watchConfigFile, getOmpConfigPath } from "./config/ompConfig.ts";
+import {
+  getOmpConfig,
+  refreshOmpConfig,
+  resolveAgentDir,
+  writeOmpConfig,
+  watchConfigFile,
+  getOmpConfigPath,
+} from "./config/ompConfig.ts";
 import { SettingsEditorProvider } from "./settings/provider.ts";
 
 let extensionUri: vscode.Uri;
@@ -48,11 +66,70 @@ let chatProvider: OmpChatProvider | undefined;
 // RPC controller — owns the single active OMP process.
 let rpcController: OmpRpcControllerImpl | undefined;
 
-
 // Slash command state — merged static/runtime slash catalog and dispatcher.
 let slashCatalog: SlashCommand[] = [];
 let slashCatalogVersion = "0";
 let slashDispatcher: SlashDispatcher | undefined;
+
+// Discovered agent definitions — pushed from the bridge extension.
+interface DiscoveredAgent {
+  name: string;
+  description: string;
+  systemPrompt: string;
+  tools?: string[];
+  spawns?: string[] | "*";
+  model?: string | string[];
+  thinkingLevel?: string;
+  source: string;
+  filePath?: string;
+}
+interface ReverseAgentsResult {
+  ok?: boolean;
+  count?: number;
+  error?: string;
+  agents?: DiscoveredAgent[];
+}
+let discoveredAgents: DiscoveredAgent[] = [];
+
+// Discovered skills/commands — fetched from the bridge extension.
+interface DiscoveredSkill {
+  name: string;
+  description: string;
+  source: string;
+  location: string;
+  path: string;
+}
+interface ReverseSkillsResult {
+  ok?: boolean;
+  count?: number;
+  error?: string;
+  skills?: DiscoveredSkill[];
+}
+let discoveredSkills: DiscoveredSkill[] = [];
+
+// Discovered MCP servers — fetched from the bridge extension.
+interface DiscoveredMcpServer {
+  name: string;
+  type: string;
+  status: string;
+  enabled: boolean;
+  source: string;
+  sourcePath: string;
+  config: Record<string, unknown>;
+}
+interface ReverseMcpServersResult {
+  ok?: boolean;
+  count?: number;
+  error?: string;
+  servers?: DiscoveredMcpServer[];
+}
+let discoveredMcpServers: DiscoveredMcpServer[] = [];
+interface ReverseModelsResult {
+  ok?: boolean;
+  count?: number;
+  error?: string;
+  models?: unknown;
+}
 const CURRENT_PHASE = 4;
 // Session state — tracks the current session list and selection.
 // These are owned by the extension host; the webview renders them.
@@ -69,7 +146,9 @@ let currentActiveSessionPath: string | undefined;
 let transcriptManager: TranscriptManager | undefined;
 
 // Pending user attachments — stashed before prompt, consumed by bridge callback.
-let pendingUserAttachments: { fileContexts: Array<{ path: string; line?: number; endLine?: number; languageId?: string }> } | null = null;
+let pendingUserAttachments: {
+  fileContexts: Array<{ path: string; line?: number; endLine?: number; languageId?: string }>;
+} | null = null;
 
 // Header state — tracks the header presentation state for the webview.
 let currentHeaderState: ChatHeaderState = { ...EMPTY_HEADER_STATE };
@@ -100,8 +179,17 @@ let currentModelRole: string = "default";
 let cachedModelRoles: Record<string, string> = {};
 let cachedCycleOrder: string[] = ["smol", "default", "slow"];
 
+
+// Save-in-flight guard: suppresses config watcher pushes during known saves (Rule 7).
+let saveInFlight = false;
 // Pending extension UI requests — buffered for webview delivery and response routing.
-const pendingUiRequests = new Map<string, { request: import("./protocol/webviewMessages.ts").ExtensionUiRequestForWebview; timestamp: number }>();
+const pendingUiRequests = new Map<
+  string,
+  {
+    request: import("./protocol/webviewMessages.ts").ExtensionUiRequestForWebview;
+    timestamp: number;
+  }
+>();
 
 /**
  * Start the OMP bridge server.
@@ -115,32 +203,65 @@ async function startBridge(
   context: vscode.ExtensionContext,
 ): Promise<{ url: string; token: string } | undefined> {
   try {
-    const bridge = await createBridge(context, undefined, () => ({
-      model: currentHeaderState.details?.model,
-      thinkingLevel: currentHeaderState.details?.thinkingLevel,
-      contextPercent: currentHeaderState.contextPercent,
-      tokens: (turnTokensInput > 0 || turnTokensOutput > 0 || turnTokensCacheRead > 0)
-        ? { input: turnTokensInput, output: turnTokensOutput, cacheRead: turnTokensCacheRead }
-        : undefined,
-      costUsd: turnCostAccumulator > 0 ? turnCostAccumulator : undefined,
-      durationMs: turnStartTimestamp > 0 ? Date.now() - turnStartTimestamp : undefined,
-    }), () => {
-      const result = pendingUserAttachments;
-      pendingUserAttachments = null;
-      return result;
-    }, (commands) => {
-      outputChannel.appendLine(`[omp] Bridge pushed ${commands.length} runtime commands`);
-      const runtimeCommands: RuntimeDiscoveredCommand[] = commands.map((cmd) => ({
-        name: cmd.name,
-        description: cmd.description,
-        source: (cmd.source as "extension" | "prompt" | "skill") || "prompt",
-        location: cmd.location,
-        path: cmd.path,
-      }));
-      slashCatalog = mergeSlashCatalog(runtimeCommands);
-      slashCatalogVersion = `${Date.now()}`;
-      pushSlashCatalog();
-    });
+    const bridge = await createBridge(
+      context,
+      undefined,
+      () => ({
+        model: currentHeaderState.details?.model,
+        thinkingLevel: currentHeaderState.details?.thinkingLevel,
+        contextPercent: currentHeaderState.contextPercent,
+        tokens:
+          turnTokensInput > 0 || turnTokensOutput > 0 || turnTokensCacheRead > 0
+            ? { input: turnTokensInput, output: turnTokensOutput, cacheRead: turnTokensCacheRead }
+            : undefined,
+        costUsd: turnCostAccumulator > 0 ? turnCostAccumulator : undefined,
+        durationMs: turnStartTimestamp > 0 ? Date.now() - turnStartTimestamp : undefined,
+      }),
+      () => {
+        const result = pendingUserAttachments;
+        pendingUserAttachments = null;
+        return result;
+      },
+      (commands) => {
+        outputChannel.appendLine(`[omp] Bridge pushed ${commands.length} runtime commands`);
+        const runtimeCommands: RuntimeDiscoveredCommand[] = commands.map((cmd) => ({
+          name: cmd.name,
+          description: cmd.description,
+          source: (cmd.source as "extension" | "prompt" | "skill") || "prompt",
+          location: cmd.location,
+          path: cmd.path,
+        }));
+        slashCatalog = mergeSlashCatalog(runtimeCommands);
+        slashCatalogVersion = `${Date.now()}`;
+        pushSlashCatalog();
+      },
+      (agents) => {
+        outputChannel.appendLine(`[omp] Bridge pushed ${agents.length} agent definitions`);
+        discoveredAgents = agents;
+      },
+      (port) => {
+        outputChannel.appendLine(`[omp] Reverse bridge registered on port ${port}`);
+        void (async () => {
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        })();
+      },
+    );
     bridgeContext = bridge;
     outputChannel.appendLine(`[omp] bridge started at ${bridge.url}`);
     return { url: bridge.url, token: bridge.token };
@@ -151,6 +272,275 @@ async function startBridge(
     return undefined;
   }
 }
+
+interface EditableAgentPayload {
+  name: string;
+  description: string;
+  systemPrompt: string;
+  tools?: string[];
+  model?: string | string[];
+  thinkingLevel?: string;
+}
+
+function sanitizeAgentFileName(name: string): string {
+  return name
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getProjectAgentsDir(): string {
+  const scope = resolveWorkspaceScope(vscode.workspace.workspaceFolders);
+  const workspaceFolder = getEffectiveWorkspaceFolder(scope);
+  if (!workspaceFolder) {
+    throw new Error("No workspace folder is available for project agent creation.");
+  }
+  return path.join(workspaceFolder, ".omp", "agents");
+}
+
+function getGlobalAgentsDir(): string {
+  return path.join(os.homedir(), ".omp", "agents");
+}
+
+function resolveAgentWritePath(
+  scope: "global" | "project",
+  agent: EditableAgentPayload,
+  filePath?: string,
+): string {
+  const baseDir = scope === "global" ? getGlobalAgentsDir() : getProjectAgentsDir();
+  const resolvedBase = path.resolve(baseDir);
+  const target = filePath
+    ? path.resolve(filePath)
+    : path.join(resolvedBase, `${sanitizeAgentFileName(agent.name)}.md`);
+  const relative = path.relative(resolvedBase, target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Agent files can only be written inside the selected OMP agents directory.");
+  }
+  if (!target.endsWith(".md")) {
+    throw new Error("Agent file must use a .md extension.");
+  }
+  return target;
+}
+
+function agentMarkdown(agent: EditableAgentPayload): string {
+  const frontmatter: Record<string, unknown> = {
+    name: agent.name.trim(),
+    description: agent.description.trim(),
+  };
+  if (agent.tools && agent.tools.length > 0) frontmatter.tools = agent.tools;
+  if (agent.model && (Array.isArray(agent.model) ? agent.model.length > 0 : agent.model.trim())) {
+    frontmatter.model = agent.model;
+  }
+  if (agent.thinkingLevel?.trim()) frontmatter.thinkingLevel = agent.thinkingLevel.trim();
+  const yaml = stringifyYaml(frontmatter).trimEnd();
+  return `---\n${yaml}\n---\n${agent.systemPrompt.trimEnd()}\n`;
+}
+
+async function writeAgentDefinition(
+  scope: "global" | "project",
+  agent: EditableAgentPayload,
+  filePath?: string,
+): Promise<string> {
+  if (!agent.name.trim()) throw new Error("Agent name is required.");
+  if (!agent.description.trim()) throw new Error("Agent description is required.");
+  const target = resolveAgentWritePath(scope, agent, filePath);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, agentMarkdown(agent), "utf-8");
+  return target;
+}
+
+function resolveAgentDeletePath(filePath: string): string {
+  const target = path.resolve(filePath);
+  const allowedDirs = [getGlobalAgentsDir()];
+  try {
+    allowedDirs.push(getProjectAgentsDir());
+  } catch {
+    // No project folder; global deletion may still be valid.
+  }
+  for (const dir of allowedDirs) {
+    const base = path.resolve(dir);
+    const relative = path.relative(base, target);
+    if (!relative.startsWith("..") && !path.isAbsolute(relative) && target.endsWith(".md")) {
+      return target;
+    }
+  }
+  throw new Error("Agent files can only be deleted from OMP global/project agents directories.");
+}
+
+async function deleteAgentDefinition(filePath: string): Promise<void> {
+  await fs.unlink(resolveAgentDeletePath(filePath));
+}
+
+async function resolveStartupModelDefaults(
+  requestedModel?: string,
+  requestedThinking?: string,
+): Promise<{ model?: string; thinking?: string }> {
+  if (requestedModel || requestedThinking) {
+    return { model: requestedModel, thinking: requestedThinking };
+  }
+
+  const config = await getOmpConfig();
+  const defaultRole = config.modelRoles.default?.trim();
+  if (!defaultRole) {
+    return { model: requestedModel, thinking: requestedThinking };
+  }
+
+  let model = defaultRole;
+  let thinking = config.defaultThinkingLevel;
+  const lastColon = defaultRole.lastIndexOf(":");
+  const slash = defaultRole.indexOf("/");
+  if (lastColon > slash) {
+    model = defaultRole.slice(0, lastColon);
+    thinking = defaultRole.slice(lastColon + 1) || thinking;
+  }
+
+  return { model, thinking };
+}
+
+
+const SETTINGS_PANEL_RUNTIME_KEYS = [
+  "ask.notify",
+  "ask.timeout",
+  "async.enabled",
+  "async.pollWaitDuration",
+  "autocompleteMaxVisible",
+  "autoResume",
+  "bash.autoBackground.enabled",
+  "astEdit.enabled",
+  "astGrep.enabled",
+  "bashInterceptor.enabled",
+  "branchSummary.enabled",
+  "browser.enabled",
+  "browser.headless",
+  "browser.screenshotDir",
+  "calc.enabled",
+  "checkpoint.enabled",
+  "collapseChangelog",
+  "commands.enableClaudeProject",
+  "commands.enableClaudeUser",
+  "commands.enableOpencodeProject",
+  "commands.enableOpencodeUser",
+  "compaction.enabled",
+  "compaction.handoffSaveToDisk",
+  "compaction.idleEnabled",
+  "compaction.idleThresholdTokens",
+  "compaction.idleTimeoutSeconds",
+  "compaction.remoteEnabled",
+  "compaction.strategy",
+  "compaction.thresholdPercent",
+  "compaction.thresholdTokens",
+  "completion.notify",
+  "contextPromotion.enabled",
+  "cycleOrder",
+  "debug.enabled",
+  "defaultThinkingLevel",
+  "dev.autoqa",
+  "disabledProviders",
+  "enabledModels",
+  "doubleEscapeAction",
+  "edit.blockAutoGenerated",
+  "edit.fuzzyMatch",
+  "edit.fuzzyThreshold",
+  "edit.mode",
+  "edit.streamingAbort",
+  "eval.js",
+  "eval.py",
+  "exa.enabled",
+  "exa.enableResearcher",
+  "exa.enableSearch",
+  "exa.enableWebsets",
+  "fetch.enabled",
+  "find.enabled",
+  "followUpMode",
+  "github.enabled",
+  "hideThinkingBlock",
+  "hindsight.apiUrl",
+  "hindsight.autoRecall",
+  "hindsight.autoRetain",
+  "hindsight.bankId",
+  "hindsight.mentalModelAutoSeed",
+  "hindsight.mentalModelsEnabled",
+  "hindsight.retainMode",
+  "hindsight.scoping",
+  "inspect_image.enabled",
+  "interruptMode",
+  "loop.mode",
+  "irc.enabled",
+  "lsp.diagnosticsOnEdit",
+  "lsp.diagnosticsOnWrite",
+  "lsp.enabled",
+  "lsp.formatOnWrite",
+  "marketplace.autoUpdate",
+  "memory.backend",
+  "mcp.discoveryMode",
+  "mcp.enableProjectConfig",
+  "mcp.notificationDebounceMs",
+  "mcp.notifications",
+  "modelProviderOrder",
+  "modelRoles",
+  "notebook.enabled",
+  "presencePenalty",
+  "minP",
+  "providers.image",
+  "providers.kimiApiFormat",
+  "providers.openaiWebsockets",
+  "providers.parallelFetch",
+  "providers.webSearch",
+  "python.kernelMode",
+  "python.sharedGateway",
+  "read.defaultLimit",
+  "repeatToolDescriptions",
+  "read.toolResultPreview",
+  "readHashLines",
+  "readLineNumbers",
+  "recipe.enabled",
+  "renderMermaid.enabled",
+  "repetitionPenalty",
+  "retry.fallbackRevertPolicy",
+  "retry.maxRetries",
+  "search.contextAfter",
+  "search.contextBefore",
+  "search.enabled",
+  "searxng.endpoint",
+  "secrets.enabled",
+  "serviceTier",
+  "startup.checkUpdate",
+  "startup.quiet",
+  "shellMinimizer.enabled",
+  "skills.enableSkillCommands",
+  "steeringMode",
+  "stt.enabled",
+  "stt.modelName",
+  "task.agentModelOverrides",
+  "task.disabledAgents",
+  "task.eager",
+  "task.isolation.commits",
+  "task.isolation.merge",
+  "task.isolation.mode",
+  "task.maxConcurrency",
+  "task.maxRecursionDepth",
+  "task.simple",
+  "tasks.todoClearDelay",
+  "temperature",
+  "todo.eager",
+  "todo.enabled",
+  "todo.reminders",
+  "todo.reminders.max",
+  "tools.artifactSpillThreshold",
+  "tools.artifactTailBytes",
+  "tools.artifactTailLines",
+  "tools.intentTracing",
+  "tools.maxTimeout",
+  "topK",
+  "topP",
+  "treeFilterMode",
+  "ttsr.contextMode",
+  "ttsr.enabled",
+  "ttsr.interruptMode",
+  "ttsr.repeatGap",
+  "ttsr.repeatMode",
+  "web_search.enabled",
+] as const;
 
 async function callReverseBridge(path: string, body?: unknown): Promise<unknown> {
   const port = bridgeContext?.reverseBridgePort;
@@ -174,9 +564,98 @@ async function callReverseBridge(path: string, body?: unknown): Promise<unknown>
     }
     return await response.json();
   } catch (err) {
-    outputChannel.appendLine(`[omp] Reverse bridge ${path} error: ${err instanceof Error ? err.message : String(err)}`);
+    outputChannel.appendLine(
+      `[omp] Reverse bridge ${path} error: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return undefined;
   }
+}
+
+async function getSettingsPanelConfig(rawConfig: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const runtimeSettings = await callReverseBridge("/get-settings", {
+    keys: SETTINGS_PANEL_RUNTIME_KEYS,
+  });
+
+  if (!runtimeSettings || typeof runtimeSettings !== "object" || Array.isArray(runtimeSettings)) {
+    return rawConfig;
+  }
+
+  return {
+    ...rawConfig,
+    ...(runtimeSettings as Record<string, unknown>),
+  };
+}
+
+async function fetchAgentsFromReverseBridge(): Promise<DiscoveredAgent[]> {
+  outputChannel.appendLine(
+    `[omp] Fetching agents via reverse bridge (port=${bridgeContext?.reverseBridgePort ?? "none"})`,
+  );
+  const result = (await callReverseBridge("/agents")) as ReverseAgentsResult | undefined;
+  if (!result) {
+    outputChannel.appendLine("[omp] Agent discovery via reverse bridge returned no response");
+    return discoveredAgents;
+  }
+  if (!result.ok) {
+    outputChannel.appendLine(
+      `[omp] Agent discovery via reverse bridge failed: ${result.error ?? "unknown error"}`,
+    );
+    return discoveredAgents;
+  }
+  if (!Array.isArray(result.agents)) {
+    outputChannel.appendLine("[omp] Agent discovery via reverse bridge returned malformed payload");
+    return discoveredAgents;
+  }
+  discoveredAgents = result.agents;
+  const sources = discoveredAgents.reduce<Record<string, number>>((acc, agent) => {
+    acc[agent.source] = (acc[agent.source] ?? 0) + 1;
+    return acc;
+  }, {});
+  outputChannel.appendLine(
+    `[omp] Agent discovery loaded ${discoveredAgents.length} agents via reverse bridge: ${JSON.stringify(sources)}`,
+  );
+  return discoveredAgents;
+}
+
+async function fetchProviderStatusFromReverseBridge(): Promise<ProviderStatusEntry[]> {
+  const result = (await callReverseBridge("/provider-status")) as
+    | { providers: ProviderStatusEntry[] }
+    | undefined;
+  if (!result || !Array.isArray(result.providers)) return [];
+  return result.providers;
+}
+
+async function fetchSkillsFromReverseBridge(): Promise<DiscoveredSkill[]> {
+  const result = (await callReverseBridge("/skills")) as ReverseSkillsResult | undefined;
+  if (!result) return discoveredSkills;
+  if (!result.ok) {
+    outputChannel.appendLine(
+      `[omp] Skills discovery via reverse bridge failed: ${result.error ?? "unknown error"}`,
+    );
+    return discoveredSkills;
+  }
+  if (!Array.isArray(result.skills)) return discoveredSkills;
+  discoveredSkills = result.skills;
+  outputChannel.appendLine(
+    `[omp] Skills discovery loaded ${discoveredSkills.length} skills via reverse bridge`,
+  );
+  return discoveredSkills;
+}
+
+async function fetchMcpServersFromReverseBridge(): Promise<DiscoveredMcpServer[]> {
+  const result = (await callReverseBridge("/mcp-servers")) as ReverseMcpServersResult | undefined;
+  if (!result) return discoveredMcpServers;
+  if (!result.ok) {
+    outputChannel.appendLine(
+      `[omp] MCP servers discovery via reverse bridge failed: ${result.error ?? "unknown error"}`,
+    );
+    return discoveredMcpServers;
+  }
+  if (!Array.isArray(result.servers)) return discoveredMcpServers;
+  discoveredMcpServers = result.servers;
+  outputChannel.appendLine(
+    `[omp] MCP servers discovery loaded ${discoveredMcpServers.length} servers via reverse bridge`,
+  );
+  return discoveredMcpServers;
 }
 
 function normalizeAvailableModels(models: unknown): OmpAvailableModel[] {
@@ -188,28 +667,77 @@ function normalizeAvailableModels(models: unknown): OmpAvailableModel[] {
   });
 }
 
+function mergeAvailableModels(
+  primary: OmpAvailableModel[],
+  secondary: OmpAvailableModel[],
+): OmpAvailableModel[] {
+  if (secondary.length === 0) return primary;
+  const seen = new Set(primary.map((model) => `${model.provider}/${model.id}`));
+  const merged = [...primary];
+  for (const model of secondary) {
+    const key = `${model.provider}/${model.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(model);
+  }
+  return merged;
+}
+
+async function fetchModelsFromReverseBridge(): Promise<OmpAvailableModel[]> {
+  const result = (await callReverseBridge("/models")) as ReverseModelsResult | undefined;
+  if (!result) return [];
+  if (!result.ok) {
+    outputChannel.appendLine(
+      `[omp] Model discovery via reverse bridge failed: ${result.error ?? "unknown error"}`,
+    );
+    return [];
+  }
+  const models = normalizeAvailableModels(result.models);
+  outputChannel.appendLine(
+    `[omp] Model discovery loaded ${models.length} models via reverse bridge`,
+  );
+  return models;
+}
+
+function postAvailableModels(
+  models: OmpAvailableModel[],
+  source: "runtime" | "cache" | "refresh",
+): void {
+  const message = {
+    type: "runtime.availableModels" as const,
+    models,
+    source,
+    updatedAt: Date.now(),
+  };
+  postToWebview(message);
+  SettingsEditorProvider.postMessage(message);
+}
+
 function refreshAvailableModels(source: "runtime" | "refresh" = "runtime"): void {
   outputChannel.appendLine(`[omp] getAvailableModels (${source})`);
   if (!rpcController?.isRunning()) {
-    postToWebview({ type: "runtime.availableModels", models: [], source, updatedAt: Date.now() });
+    void fetchModelsFromReverseBridge().then((models) => {
+      cachedAvailableModels = models;
+      postAvailableModels(models, source);
+    });
     return;
   }
 
   void rpcController
     .send<{ models: unknown }>({ type: "get_available_models" })
-    .then((result) => {
-      cachedAvailableModels = normalizeAvailableModels(result?.models);
-      postToWebview({
-        type: "runtime.availableModels",
-        models: cachedAvailableModels,
-        source,
-        updatedAt: Date.now(),
-      });
+    .then(async (result) => {
+      const rpcModels = normalizeAvailableModels(result?.models);
+      const bridgeModels = await fetchModelsFromReverseBridge();
+      cachedAvailableModels = mergeAvailableModels(rpcModels, bridgeModels);
+      postAvailableModels(cachedAvailableModels, source);
       pushFooterState();
     })
     .catch((err) => {
       outputChannel.appendLine(`[omp] getAvailableModels failed: ${err}`);
-      postToWebview({ type: "runtime.availableModels", models: [], source, updatedAt: Date.now() });
+      void fetchModelsFromReverseBridge().then((models) => {
+        cachedAvailableModels = models;
+        postAvailableModels(models, source);
+      });
     });
 }
 
@@ -278,15 +806,18 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       const { sessionPath, title } = message;
       outputChannel.appendLine(`[omp] session.rename: ${sessionPath} → "${title}"`);
       if (rpcController?.isRunning() && title) {
-        void rpcController.send({ type: "set_session_name", name: title }).then(() => {
-          // Update header immediately
-          currentHeaderState = { ...currentHeaderState, sessionName: title };
-          postToWebview({ type: "header.state", state: currentHeaderState });
-          // Refresh session list to reflect new name
-          refreshSessions();
-        }).catch((err) => {
-          outputChannel.appendLine(`[omp] session.rename failed: ${err}`);
-        });
+        void rpcController
+          .send({ type: "set_session_name", name: title })
+          .then(() => {
+            // Update header immediately
+            currentHeaderState = { ...currentHeaderState, sessionName: title };
+            postToWebview({ type: "header.state", state: currentHeaderState });
+            // Refresh session list to reflect new name
+            refreshSessions();
+          })
+          .catch((err) => {
+            outputChannel.appendLine(`[omp] session.rename failed: ${err}`);
+          });
       }
       break;
     }
@@ -330,8 +861,16 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
           break;
         }
       }
-      outputChannel.appendLine(`[omp] chat.send: ${message.sessionPath} (behavior: ${message.behavior ?? "auto"})`);
-      handleChatSend(message.sessionPath, message.content, message.behavior, message.fileContexts, message.attachments);
+      outputChannel.appendLine(
+        `[omp] chat.send: ${message.sessionPath} (behavior: ${message.behavior ?? "auto"})`,
+      );
+      handleChatSend(
+        message.sessionPath,
+        message.content,
+        message.behavior,
+        message.fileContexts,
+        message.attachments,
+      );
       break;
     }
 
@@ -359,7 +898,11 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
         const match = blobRef.match(/^blob:sha256:([a-f0-9]+)$/);
         if (match?.[1]) {
           const blobPath = require("node:path").join(
-            require("node:os").homedir(), ".omp", "agent", "blobs", match[1],
+            require("node:os").homedir(),
+            ".omp",
+            "agent",
+            "blobs",
+            match[1],
           );
           void vscode.commands.executeCommand("vscode.open", vscode.Uri.file(blobPath));
         }
@@ -414,13 +957,15 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
     case "runtime.setThinkingLevel":
       outputChannel.appendLine(`[omp] setThinkingLevel: ${message.level}`);
       if (rpcController?.isRunning()) {
-        void rpcController.send({ type: "set_thinking_level", level: message.level }).then(async () => {
-          const state = await rpcController!.getState();
-          currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
-          postToWebview({ type: "runtime.state", state: currentRuntimeState });
-          updateHeaderFromOmpState(state);
-          pushFooterState();
-        });
+        void rpcController
+          .send({ type: "set_thinking_level", level: message.level })
+          .then(async () => {
+            const state = await rpcController!.getState();
+            currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
+            postToWebview({ type: "runtime.state", state: currentRuntimeState });
+            updateHeaderFromOmpState(state);
+            pushFooterState();
+          });
       }
       break;
 
@@ -469,14 +1014,23 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
     case "extensionUi.respond": {
       // Forward the user's response to the runtime via stdin
       if (!rpcController) break;
-      const { requestId, response } = message as { requestId: string; response: Record<string, unknown> };
+      const { requestId, response } = message as {
+        requestId: string;
+        response: Record<string, unknown>;
+      };
       // Guard: ignore late responses for cancelled/expired requests
       if (!pendingUiRequests.has(requestId)) {
-        outputChannel.appendLine(`[omp] extensionUi.respond: ignoring late response for ${requestId} (not pending)`);
+        outputChannel.appendLine(
+          `[omp] extensionUi.respond: ignoring late response for ${requestId} (not pending)`,
+        );
         break;
       }
       pendingUiRequests.delete(requestId);
-      const uiResponse = { ...response, type: "extension_ui_response", id: requestId } as import("./protocol/ompRpcTypes.ts").OmpExtensionUiResponse;
+      const uiResponse = {
+        ...response,
+        type: "extension_ui_response",
+        id: requestId,
+      } as import("./protocol/ompRpcTypes.ts").OmpExtensionUiResponse;
       void rpcController.sendUiResponse(uiResponse).catch((err) => {
         outputChannel.appendLine(`[omp] extensionUi.respond failed: ${err}`);
       });
@@ -520,7 +1074,7 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
         provider = modelSpec.slice(0, slash);
         modelId = modelSpec.slice(slash + 1);
       } else {
-        const match = cachedAvailableModels.find(m => m.id.includes(modelSpec));
+        const match = cachedAvailableModels.find((m) => m.id.includes(modelSpec));
         if (!match) break;
         provider = match.provider;
         modelId = match.id;
@@ -550,8 +1104,22 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       outputChannel.appendLine("[omp] settings.load");
       void (async () => {
         const config = await getOmpConfig();
-        postToWebview({ type: "settings.loaded", config: config.raw });
-        SettingsEditorProvider.postMessage({ type: "settings.loaded", config: config.raw });
+        const settingsConfig = await getSettingsPanelConfig(config.raw);
+        const agents = await fetchAgentsFromReverseBridge();
+        const providerStatus = await fetchProviderStatusFromReverseBridge();
+        const skills = await fetchSkillsFromReverseBridge();
+        const mcpServers = await fetchMcpServersFromReverseBridge();
+        const payload = {
+          type: "settings.loaded" as const,
+          config: settingsConfig,
+          agents,
+          bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+          providerStatus,
+          skills,
+          mcpServers,
+        };
+        postToWebview(payload);
+        SettingsEditorProvider.postMessage(payload);
       })();
       break;
 
@@ -559,38 +1127,49 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       outputChannel.appendLine("[omp] settings.save");
       void (async () => {
         try {
+          saveInFlight = true;
           const updated = await writeOmpConfig(message.config);
 
           // Apply to running runtime via reverse bridge (instant)
           const result = await callReverseBridge("/settings", message.config);
           if (result) {
-            outputChannel.appendLine(`[omp] Reverse bridge applied settings: ${JSON.stringify(result)}`);
+            outputChannel.appendLine(
+              `[omp] Reverse bridge applied settings: ${JSON.stringify(result)}`,
+            );
           }
 
-          // Refresh UI state
+          // Refresh UI state and push footer with known values
+          const savedPatch = message.config as Record<string, unknown>;
+          if (typeof savedPatch.steeringMode === "string") currentSteeringMode = savedPatch.steeringMode;
+          if (typeof savedPatch.followUpMode === "string") currentFollowUpMode = savedPatch.followUpMode;
+          if (typeof savedPatch.interruptMode === "string") currentInterruptMode = savedPatch.interruptMode;
+          pushFooterState();
+
           if (rpcController?.isRunning()) {
             try {
               const state = await rpcController.getState();
               currentRuntimeState = mapControllerState(state, currentActiveSessionPath);
               postToWebview({ type: "runtime.state", state: currentRuntimeState });
-              if (state.steeringMode) currentSteeringMode = state.steeringMode;
-              if (state.followUpMode) currentFollowUpMode = state.followUpMode;
-              if (state.interruptMode) currentInterruptMode = state.interruptMode;
               updateHeaderFromOmpState(state);
-              pushFooterState();
             } catch {}
             cachedModelRoles = updated.modelRoles;
             cachedCycleOrder = updated.cycleOrder;
           }
 
-          postToWebview({ type: "settings.updated", config: updated.raw });
-          SettingsEditorProvider.postMessage({ type: "settings.updated", config: updated.raw });
+          const settingsConfig = await getSettingsPanelConfig(updated.raw);
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          postToWebview({ type: "settings.updated", config: settingsConfig, providerStatus, skills, mcpServers });
+          SettingsEditorProvider.postMessage({ type: "settings.updated", config: settingsConfig, providerStatus, skills, mcpServers });
           postToWebview({
             type: "display.settings",
             hideThinkingBlock: !!updated.raw.hideThinkingBlock,
             showTokenUsage: !!updated.raw["display.showTokenUsage"],
           } as any);
+          saveInFlight = false;
         } catch (err) {
+          saveInFlight = false;
           const msg = err instanceof Error ? err.message : String(err);
           postToWebview({ type: "settings.updateFailed", message: msg });
           SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
@@ -612,6 +1191,93 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
         } catch (err) {
           outputChannel.appendLine(`[omp] failed to open config file: ${err}`);
         }
+      })();
+      break;
+
+    case "settings.agent.write":
+      outputChannel.appendLine("[omp] settings.agent.write");
+      void (async () => {
+        try {
+          const filePath = await writeAgentDefinition(
+            message.scope,
+            message.agent,
+            message.filePath,
+          );
+          outputChannel.appendLine(`[omp] wrote agent definition: ${filePath}`);
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.agent.delete":
+      outputChannel.appendLine("[omp] settings.agent.delete");
+      void (async () => {
+        try {
+          await deleteAgentDefinition(message.filePath);
+          outputChannel.appendLine(`[omp] deleted agent definition: ${message.filePath}`);
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.omc.load": {
+      const ompPath = vscode.workspace.getConfiguration("omp").get<string>("path") ?? "";
+      const payload = { type: "settings.omc.loaded" as const, settings: { path: ompPath } };
+      postToWebview(payload);
+      SettingsEditorProvider.postMessage(payload);
+      break;
+    }
+
+    case "settings.omc.save":
+      outputChannel.appendLine("[omp] settings.omc.save");
+      void (async () => {
+        const value = message.settings.path;
+        await vscode.workspace
+          .getConfiguration("omp")
+          .update("path", value === null ? undefined : value, vscode.ConfigurationTarget.Global);
+        const payload = { type: "settings.omc.updated" as const };
+        postToWebview(payload);
+        SettingsEditorProvider.postMessage(payload);
       })();
       break;
 
@@ -645,6 +1311,9 @@ async function handleSessionStart(
 ): Promise<void> {
   const scope = resolveWorkspaceScope(vscode.workspace.workspaceFolders);
   const workspaceFolder = getEffectiveWorkspaceFolder(scope);
+  const startupDefaults = await resolveStartupModelDefaults(model, thinking);
+  const effectiveModel = startupDefaults.model;
+  const effectiveThinking = startupDefaults.thinking;
 
   if (!workspaceFolder) {
     pushLaunchFailed(
@@ -654,8 +1323,15 @@ async function handleSessionStart(
       {
         type: "session.start",
         prompt,
-        model,
-        thinking: thinking as "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | undefined,
+        model: effectiveModel,
+        thinking: effectiveThinking as
+          | "off"
+          | "minimal"
+          | "low"
+          | "medium"
+          | "high"
+          | "xhigh"
+          | undefined,
       },
     );
     return;
@@ -666,8 +1342,8 @@ async function handleSessionStart(
     kind: "new",
     workspaceFolder,
     prompt: prompt.trim() || undefined,
-    model,
-    thinking,
+    model: effectiveModel,
+    thinking: effectiveThinking,
   };
 
   await launchSession(request, "new", runId, prompt.trim());
@@ -785,7 +1461,11 @@ async function launchSession(
   const env = createOmpEnvironment(bridgeConfig);
 
   // Resolve path to the bundled bridge extension
-  const bridgeExtensionPath = vscode.Uri.joinPath(extensionUri, "bridge", "omp-vscode-bridge.js").fsPath;
+  const bridgeExtensionPath = vscode.Uri.joinPath(
+    extensionUri,
+    "bridge",
+    "omp-vscode-bridge.js",
+  ).fsPath;
 
   rpcController = new OmpRpcControllerImpl({
     process: {
@@ -843,36 +1523,47 @@ async function launchSession(
 
     // Fetch full state immediately to populate context %, todos, and delivery modes
     if (rpcController?.isRunning()) {
-      void rpcController.getState().then((fullState) => {
-        // Sync mode variables from runtime state
-        if (fullState.steeringMode) currentSteeringMode = fullState.steeringMode;
-        if (fullState.followUpMode) currentFollowUpMode = fullState.followUpMode;
-        if (fullState.interruptMode) currentInterruptMode = fullState.interruptMode;
-        // Detect active role from model
-        const currentModel = fullState.model as { provider?: string; id?: string } | undefined;
-        if (currentModel?.id) {
-          const modelKey = `${currentModel.provider ?? ""}/${currentModel.id}`;
-          const matchedRole = Object.entries(cachedModelRoles).find(
-            ([, pattern]) => {
-              const spec = pattern.includes(":") ? pattern.slice(0, pattern.lastIndexOf(":")) : pattern;
-              return spec === modelKey || modelKey.includes(spec) || spec.includes(currentModel.id!);
-            },
-          );
-          currentModelRole = matchedRole?.[0] ?? currentModelRole;
-        }
-        updateHeaderFromOmpState(fullState);
-        pushFooterState();
-      }).catch(() => { /* best effort */ });
+      void rpcController
+        .getState()
+        .then((fullState) => {
+          // Sync mode variables from runtime state
+          if (fullState.steeringMode) currentSteeringMode = fullState.steeringMode;
+          if (fullState.followUpMode) currentFollowUpMode = fullState.followUpMode;
+          if (fullState.interruptMode) currentInterruptMode = fullState.interruptMode;
+          // Detect active role from model
+          const currentModel = fullState.model as { provider?: string; id?: string } | undefined;
+          if (currentModel?.id) {
+            const modelKey = `${currentModel.provider ?? ""}/${currentModel.id}`;
+            const matchedRole = Object.entries(cachedModelRoles).find(([, pattern]) => {
+              const spec = pattern.includes(":")
+                ? pattern.slice(0, pattern.lastIndexOf(":"))
+                : pattern;
+              return (
+                spec === modelKey || modelKey.includes(spec) || spec.includes(currentModel.id!)
+              );
+            });
+            currentModelRole = matchedRole?.[0] ?? currentModelRole;
+          }
+          updateHeaderFromOmpState(fullState);
+          pushFooterState();
+        })
+        .catch(() => {
+          /* best effort */
+        });
 
       // Pre-fetch available models for thinking support detection
       refreshAvailableModels("runtime");
     }
 
     // Load model roles config for /cycle-roles
-    void refreshOmpConfig().then((config) => {
-      cachedModelRoles = config.modelRoles;
-      cachedCycleOrder = config.cycleOrder;
-    }).catch(() => { /* best effort */ });
+    void refreshOmpConfig()
+      .then((config) => {
+        cachedModelRoles = config.modelRoles;
+        cachedCycleOrder = config.cycleOrder;
+      })
+      .catch(() => {
+        /* best effort */
+      });
 
     // Update transcript manager's session path now that we know the real path.
     if (transcriptManager && currentActiveSessionPath) {
@@ -896,9 +1587,13 @@ async function launchSession(
           messages = jsonlHydration.messages as Record<string, unknown>[];
           transcriptManager.hydrateFromMessages(
             messages,
-            jsonlHydration.turnMetadataEntries.length > 0 ? jsonlHydration.turnMetadataEntries : undefined,
+            jsonlHydration.turnMetadataEntries.length > 0
+              ? jsonlHydration.turnMetadataEntries
+              : undefined,
             "jsonl",
-            jsonlHydration.userAttachmentsEntries.length > 0 ? jsonlHydration.userAttachmentsEntries : undefined,
+            jsonlHydration.userAttachmentsEntries.length > 0
+              ? jsonlHydration.userAttachmentsEntries
+              : undefined,
           );
           outputChannel.appendLine(
             `[omp] hydrated from JSONL: ${messages.length} messages, ${jsonlHydration.turnMetadataEntries.length} turn metadata entries`,
@@ -907,7 +1602,9 @@ async function launchSession(
           messages = (await rpcController.getMessages()) as Record<string, unknown>[];
           transcriptManager.hydrateFromMessages(messages, undefined, "omp");
           transcriptManager.addSystemMessage("Could not access Session Path, restored from OMP");
-          outputChannel.appendLine("[omp] session path unreadable — restored from OMP get_messages");
+          outputChannel.appendLine(
+            "[omp] session path unreadable — restored from OMP get_messages",
+          );
         }
 
         // Seed cost/token accumulators from historical messages
@@ -1069,7 +1766,11 @@ async function handleChatSend(
 
     if (behavior === "forceSend") {
       // Abort current turn and send as fresh prompt
-      await rpcController.send({ type: "abort_and_prompt", message: runtimeMessage, images: runtimeImages });
+      await rpcController.send({
+        type: "abort_and_prompt",
+        message: runtimeMessage,
+        images: runtimeImages,
+      });
       effectiveBehavior = "forceSend";
     } else if (state.isStreaming) {
       // Auto-decide based on interruptMode if no explicit behavior
@@ -1078,7 +1779,11 @@ async function handleChatSend(
       if (effectiveBehavior === "steer") {
         await rpcController.send({ type: "steer", message: runtimeMessage, images: runtimeImages });
       } else {
-        await rpcController.send({ type: "follow_up", message: runtimeMessage, images: runtimeImages });
+        await rpcController.send({
+          type: "follow_up",
+          message: runtimeMessage,
+          images: runtimeImages,
+        });
       }
     } else {
       // Not streaming — normal prompt
@@ -1112,7 +1817,10 @@ async function handleChatSend(
   }
 }
 
-async function buildRuntimePrompt(content: string, fileContexts?: ChatFileContext[]): Promise<string> {
+async function buildRuntimePrompt(
+  content: string,
+  fileContexts?: ChatFileContext[],
+): Promise<string> {
   if (!fileContexts || fileContexts.length === 0) return content;
 
   const sections: string[] = [];
@@ -1153,9 +1861,10 @@ async function buildFileContextSection(context: ChatFileContext): Promise<string
     const byteSize = Buffer.byteLength(fullText, "utf-8");
     if (byteSize > MAX_EMBED_BYTES) {
       const lineCount = document.lineCount;
-      const sizeLabel = byteSize > 1_000_000
-        ? `${(byteSize / 1_000_000).toFixed(1)}MB`
-        : `${Math.round(byteSize / 1_000)}KB`;
+      const sizeLabel =
+        byteSize > 1_000_000
+          ? `${(byteSize / 1_000_000).toFixed(1)}MB`
+          : `${Math.round(byteSize / 1_000)}KB`;
       return [
         `<attached-file filename="${filename}" language="${language}" size="${sizeLabel}" lines="${lineCount}" reference="true">`,
         `File too large to embed (${sizeLabel}, ${lineCount} lines).`,
@@ -1260,12 +1969,21 @@ function handleRuntimeFrame(frame: unknown): void {
           postToWebview({
             type: "runtime.turnMetadata",
             metadata: {
-              model: state.model && modelId ? { provider: state.model.provider, modelId } : undefined,
+              model:
+                state.model && modelId ? { provider: state.model.provider, modelId } : undefined,
               thinkingLevel: thinkingLvl,
-              contextPercent: state.contextUsage?.percent != null ? Math.round(state.contextUsage.percent) : undefined,
-              tokens: (turnTokensInput > 0 || turnTokensOutput > 0 || turnTokensCacheRead > 0)
-                ? { input: turnTokensInput, output: turnTokensOutput, cacheRead: turnTokensCacheRead }
-                : undefined,
+              contextPercent:
+                state.contextUsage?.percent != null
+                  ? Math.round(state.contextUsage.percent)
+                  : undefined,
+              tokens:
+                turnTokensInput > 0 || turnTokensOutput > 0 || turnTokensCacheRead > 0
+                  ? {
+                      input: turnTokensInput,
+                      output: turnTokensOutput,
+                      cacheRead: turnTokensCacheRead,
+                    }
+                  : undefined,
               costUsd: turnCostAccumulator > 0 ? turnCostAccumulator : undefined,
               durationMs: turnDurationMs > 0 ? turnDurationMs : undefined,
             },
@@ -1283,9 +2001,14 @@ function handleRuntimeFrame(frame: unknown): void {
           postToWebview({
             type: "runtime.turnMetadata",
             metadata: {
-              tokens: (turnTokensInput > 0 || turnTokensOutput > 0 || turnTokensCacheRead > 0)
-                ? { input: turnTokensInput, output: turnTokensOutput, cacheRead: turnTokensCacheRead }
-                : undefined,
+              tokens:
+                turnTokensInput > 0 || turnTokensOutput > 0 || turnTokensCacheRead > 0
+                  ? {
+                      input: turnTokensInput,
+                      output: turnTokensOutput,
+                      cacheRead: turnTokensCacheRead,
+                    }
+                  : undefined,
               costUsd: turnCostAccumulator > 0 ? turnCostAccumulator : undefined,
               durationMs: turnDurationMs > 0 ? turnDurationMs : undefined,
             },
@@ -1362,7 +2085,9 @@ function handleRuntimeFrame(frame: unknown): void {
       updateRuntimeStateFromController();
       break;
     case "extension_ui_request":
-      handleExtensionUiRequest(frameObj as import("./protocol/ompRpcTypes.ts").OmpExtensionUiRequest);
+      handleExtensionUiRequest(
+        frameObj as import("./protocol/ompRpcTypes.ts").OmpExtensionUiRequest,
+      );
       break;
     default:
       // Other frames (response, etc.) are handled by controller correlation.
@@ -1377,7 +2102,9 @@ function handleRuntimeFrame(frame: unknown): void {
  * Interactive methods (select, confirm, input, editor) are forwarded to the webview.
  * The cancel method dismisses a pending dialog in the webview.
  */
-function handleExtensionUiRequest(request: import("./protocol/ompRpcTypes.ts").OmpExtensionUiRequest): void {
+function handleExtensionUiRequest(
+  request: import("./protocol/ompRpcTypes.ts").OmpExtensionUiRequest,
+): void {
   const method = (request as Record<string, unknown>).method as string;
   const id = (request as Record<string, unknown>).id as string;
 
@@ -1437,13 +2164,36 @@ function mapToWebviewRequest(
 
   switch (method) {
     case "select":
-      return { method: "select", requestId, title: r.title as string, options: r.options as string[], timeout: r.timeout as number | undefined };
+      return {
+        method: "select",
+        requestId,
+        title: r.title as string,
+        options: r.options as string[],
+        timeout: r.timeout as number | undefined,
+      };
     case "confirm":
-      return { method: "confirm", requestId, title: r.title as string, message: r.message as string, timeout: r.timeout as number | undefined };
+      return {
+        method: "confirm",
+        requestId,
+        title: r.title as string,
+        message: r.message as string,
+        timeout: r.timeout as number | undefined,
+      };
     case "input":
-      return { method: "input", requestId, title: r.title as string, placeholder: r.placeholder as string | undefined, timeout: r.timeout as number | undefined };
+      return {
+        method: "input",
+        requestId,
+        title: r.title as string,
+        placeholder: r.placeholder as string | undefined,
+        timeout: r.timeout as number | undefined,
+      };
     case "editor":
-      return { method: "editor", requestId, title: r.title as string, prefill: r.prefill as string | undefined };
+      return {
+        method: "editor",
+        requestId,
+        title: r.title as string,
+        prefill: r.prefill as string | undefined,
+      };
     default:
       // Should not reach here — caller filters to interactive methods
       return { method: "select", requestId, title: "Unknown", options: [] };
@@ -1674,7 +2424,12 @@ async function handleSessionDelete(sessionPath: string): Promise<void> {
     }
 
     const relative = path.relative(sessionDir, targetPath);
-    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative) || relative.includes(path.sep)) {
+    if (
+      relative === "" ||
+      relative.startsWith("..") ||
+      path.isAbsolute(relative) ||
+      relative.includes(path.sep)
+    ) {
       await fail("Refusing to delete a session outside this workspace.");
       return;
     }
@@ -1710,7 +2465,9 @@ async function handleSessionDelete(sessionPath: string): Promise<void> {
 }
 
 function isNodeErrorCode(err: unknown, code: string): boolean {
-  return !!err && typeof err === "object" && "code" in err && (err as { code?: unknown }).code === code;
+  return (
+    !!err && typeof err === "object" && "code" in err && (err as { code?: unknown }).code === code
+  );
 }
 
 /**
@@ -1821,11 +2578,13 @@ function updateHeaderFromOmpState(state: OmpStatePayload): void {
   }
   currentHeaderState = {
     ...currentHeaderState,
-    contextPercent: ctx?.percent != null ? Math.round(ctx.percent) : currentHeaderState.contextPercent,
+    contextPercent:
+      ctx?.percent != null ? Math.round(ctx.percent) : currentHeaderState.contextPercent,
     sessionName: state.sessionName ?? currentHeaderState.sessionName,
-    tokens: ctx?.tokens != null
-      ? { input: ctx.tokens, output: 0, cacheRead: 0 }
-      : currentHeaderState.tokens,
+    tokens:
+      ctx?.tokens != null
+        ? { input: ctx.tokens, output: 0, cacheRead: 0 }
+        : currentHeaderState.tokens,
     details: {
       model: state.model && modelId ? { provider: state.model.provider, modelId } : undefined,
       thinkingLevel: thinkingLevelStr,
@@ -1867,12 +2626,14 @@ async function refreshHeaderStats(): Promise<void> {
     const usage = stats as Record<string, unknown>;
     currentHeaderState = {
       ...currentHeaderState,
-      costUsd: typeof usage.totalCostUsd === "number" ? usage.totalCostUsd : currentHeaderState.costUsd,
-      contextPercent: typeof usage.contextPercent === "number"
-        ? Math.round(usage.contextPercent)
-        : typeof usage.usedPercent === "number"
-          ? Math.round(usage.usedPercent)
-          : currentHeaderState.contextPercent,
+      costUsd:
+        typeof usage.totalCostUsd === "number" ? usage.totalCostUsd : currentHeaderState.costUsd,
+      contextPercent:
+        typeof usage.contextPercent === "number"
+          ? Math.round(usage.contextPercent)
+          : typeof usage.usedPercent === "number"
+            ? Math.round(usage.usedPercent)
+            : currentHeaderState.contextPercent,
       tokens:
         typeof usage.inputTokens === "number"
           ? {
@@ -1974,7 +2735,9 @@ async function refreshSlashCatalogFromRuntime(): Promise<void> {
   slashCatalog = mergeSlashCatalog(runtimeCommands);
   slashCatalogVersion = `${Date.now()}`;
   pushSlashCatalog();
-  outputChannel.appendLine(`[omp] slash catalog refreshed: ${slashCatalog.length} total commands (${runtimeCommands.length} from runtime/scan)`);
+  outputChannel.appendLine(
+    `[omp] slash catalog refreshed: ${slashCatalog.length} total commands (${runtimeCommands.length} from runtime/scan)`,
+  );
 }
 
 /** Scan command directories directly when get_commands RPC is unavailable. */
@@ -2001,7 +2764,10 @@ async function scanCommandDirectories(): Promise<RuntimeDiscoveredCommand[]> {
             }
           }
           if (!description) {
-            description = content.split("\n").find((l) => l.trim())?.slice(0, 80);
+            description = content
+              .split("\n")
+              .find((l) => l.trim())
+              ?.slice(0, 80);
           }
         } catch {}
         commands.push({ name, description, source: "prompt", location, path: filePath });
@@ -2019,7 +2785,9 @@ async function scanCommandDirectories(): Promise<RuntimeDiscoveredCommand[]> {
   return commands;
 }
 function pushSlashCatalog(): void {
-  const visibleCommands = slashCatalog.filter((cmd) => cmd.phase <= CURRENT_PHASE || cmd.source === "runtime");
+  const visibleCommands = slashCatalog.filter(
+    (cmd) => cmd.phase <= CURRENT_PHASE || cmd.source === "runtime",
+  );
   postToWebview({
     type: "slash.catalog",
     version: slashCatalogVersion,
@@ -2048,20 +2816,27 @@ function pushSlashCatalog(): void {
  * mode/model/thinking change (pill updates visually).
  */
 const BADGE_SKIP_RPC_TYPES = new Set([
-  "set_model", "set_thinking_level", "set_steering_mode", "set_follow_up_mode",
-  "set_interrupt_mode", "set_auto_compaction", "set_auto_retry",
-  "cycle_model", "cycle_thinking_level", "new_session",
+  "set_model",
+  "set_thinking_level",
+  "set_steering_mode",
+  "set_follow_up_mode",
+  "set_interrupt_mode",
+  "set_auto_compaction",
+  "set_auto_retry",
+  "cycle_model",
+  "cycle_thinking_level",
+  "new_session",
 ]);
 
 /** Host actions with visible side effects — no badge needed. */
 const BADGE_SKIP_HOST_ACTIONS = new Set([
-  "newSession",       // session changes entirely
-  "resumeSession",    // session switches — visible
-  "openChat",         // panel opens — visible
-  "openSessionFile",  // editor tab opens — visible
-  "openHelpUrl",      // browser opens — visible
-  "showDiagnostics",  // output channel opens — visible
-  "cycleRoles",       // role pill updates — visible
+  "newSession", // session changes entirely
+  "resumeSession", // session switches — visible
+  "openChat", // panel opens — visible
+  "openSessionFile", // editor tab opens — visible
+  "openHelpUrl", // browser opens — visible
+  "showDiagnostics", // output channel opens — visible
+  "cycleRoles", // role pill updates — visible
 ]);
 
 function shouldEmitBadge(command: SlashCommand): boolean {
@@ -2076,7 +2851,8 @@ function shouldEmitBadge(command: SlashCommand): boolean {
   // Mode/model/thinking RPC commands update pills visibly
   if (command.route.kind === "rpc" && BADGE_SKIP_RPC_TYPES.has(command.route.rpcType)) return false;
   // Host actions with visible side effects
-  if (command.route.kind === "host" && BADGE_SKIP_HOST_ACTIONS.has(command.route.action)) return false;
+  if (command.route.kind === "host" && BADGE_SKIP_HOST_ACTIONS.has(command.route.action))
+    return false;
   // Everything else: badge it (clipboard ops, background tasks, invisible effects)
   return true;
 }
@@ -2096,7 +2872,7 @@ async function handleSlashExecute(
 
   const parsed = parseSlashInput(message.raw);
   const commandName = parsed.command || message.command;
-  const args = parsed.isSlash ? parsed.args : message.args; 
+  const args = parsed.isSlash ? parsed.args : message.args;
   const resolved = resolveSlashCommand(slashCatalog, commandName, args);
   if (resolved && resolved.phase > CURRENT_PHASE && resolved.source !== "runtime") {
     postToWebview({
@@ -2145,7 +2921,10 @@ async function handleSlashExecute(
       if (currentModel?.id) {
         const modelKey = `${currentModel.provider ?? ""}/${currentModel.id}`;
         const matchedRole = Object.entries(cachedModelRoles).find(
-          ([, pattern]) => pattern === modelKey || modelKey.includes(pattern) || pattern.includes(currentModel.id!),
+          ([, pattern]) =>
+            pattern === modelKey ||
+            modelKey.includes(pattern) ||
+            pattern.includes(currentModel.id!),
         );
         currentModelRole = matchedRole?.[0] ?? currentModelRole;
       }
@@ -2366,7 +3145,7 @@ export async function activate(context: vscode.ExtensionContext) {
       "omp.cycleRoles",
       async () => {
         if (!rpcController?.isRunning()) return;
-        const roles = cachedCycleOrder.filter(role => cachedModelRoles[role]);
+        const roles = cachedCycleOrder.filter((role) => cachedModelRoles[role]);
         if (roles.length === 0) return;
 
         // Find current role index
@@ -2394,7 +3173,7 @@ export async function activate(context: vscode.ExtensionContext) {
           provider = modelSpec.slice(0, slash);
           modelId = modelSpec.slice(slash + 1);
         } else {
-          const match = cachedAvailableModels.find(m => m.id.includes(modelSpec));
+          const match = cachedAvailableModels.find((m) => m.id.includes(modelSpec));
           if (!match) return;
           provider = match.provider;
           modelId = match.id;
@@ -2456,11 +3235,26 @@ export async function activate(context: vscode.ExtensionContext) {
   // Settings panel provider — wire message handler and file watcher
   SettingsEditorProvider.setMessageHandler(handleWebviewMessage);
   const configWatcher = watchConfigFile(() => {
+    if (saveInFlight) return;
     outputChannel.appendLine("[omp] config.yml changed externally — refreshing");
     void (async () => {
       const config = await refreshOmpConfig();
-      postToWebview({ type: "settings.loaded", config: config.raw });
-      SettingsEditorProvider.postMessage({ type: "settings.loaded", config: config.raw });
+      const settingsConfig = await getSettingsPanelConfig(config.raw);
+      const agents = await fetchAgentsFromReverseBridge();
+      const providerStatus = await fetchProviderStatusFromReverseBridge();
+      const skills = await fetchSkillsFromReverseBridge();
+      const mcpServers = await fetchMcpServersFromReverseBridge();
+      const payload = {
+        type: "settings.loaded" as const,
+        config: settingsConfig,
+        agents,
+        bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+        providerStatus,
+        skills,
+        mcpServers,
+      };
+      postToWebview(payload);
+      SettingsEditorProvider.postMessage(payload);
     })();
   });
   context.subscriptions.push({ dispose: () => configWatcher.dispose() });
@@ -2501,14 +3295,23 @@ export async function activate(context: vscode.ExtensionContext) {
     exportMd: async (outputPath?: string) => {
       if (!rpcController?.isRunning()) return undefined;
       const res = await rpcController.send({ type: "get_messages" } as any);
-      const messages = (res as { messages?: Array<{ role: string; content: unknown }> })?.messages
-        ?? (Array.isArray(res) ? res as Array<{ role: string; content: unknown }> : []);
+      const messages =
+        (res as { messages?: Array<{ role: string; content: unknown }> })?.messages ??
+        (Array.isArray(res) ? (res as Array<{ role: string; content: unknown }>) : []);
 
       const lines: string[] = ["# Session Transcript\n"];
       for (const msg of messages) {
-        const role = msg.role === "user" ? "User" : msg.role === "assistant" ? "Assistant" : msg.role;
-        const content = typeof msg.content === "string" ? msg.content :
-          Array.isArray(msg.content) ? (msg.content as Array<{ type?: string; text?: string }>).filter(b => b.type === "text").map(b => b.text).join("\n") : "";
+        const role =
+          msg.role === "user" ? "User" : msg.role === "assistant" ? "Assistant" : msg.role;
+        const content =
+          typeof msg.content === "string"
+            ? msg.content
+            : Array.isArray(msg.content)
+              ? (msg.content as Array<{ type?: string; text?: string }>)
+                  .filter((b) => b.type === "text")
+                  .map((b) => b.text)
+                  .join("\n")
+              : "";
         if (!content.trim()) continue;
         lines.push(`## ${role}\n`);
         lines.push(content);
@@ -2518,7 +3321,9 @@ export async function activate(context: vscode.ExtensionContext) {
       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       let resolvedPath: string;
       if (outputPath) {
-        resolvedPath = path.isAbsolute(outputPath) ? outputPath : path.join(workspaceRoot ?? process.cwd(), outputPath);
+        resolvedPath = path.isAbsolute(outputPath)
+          ? outputPath
+          : path.join(workspaceRoot ?? process.cwd(), outputPath);
       } else {
         resolvedPath = path.join(workspaceRoot ?? process.cwd(), "session-export.md");
       }
@@ -2546,7 +3351,11 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }),
   );
-  context.subscriptions.push({ dispose: () => { if (textChangeTimer) clearTimeout(textChangeTimer); } });
+  context.subscriptions.push({
+    dispose: () => {
+      if (textChangeTimer) clearTimeout(textChangeTimer);
+    },
+  });
 
   outputChannel.appendLine("[omp] activation complete");
 }
@@ -2589,14 +3398,20 @@ async function addFileToChatContext(uri?: vscode.Uri): Promise<void> {
   if (!targetUri || targetUri.scheme !== "file") return;
 
   const activeEditor = vscode.window.activeTextEditor;
-  const selection = activeEditor?.document.uri.toString() === targetUri.toString() ? activeEditor.selection : undefined;
+  const selection =
+    activeEditor?.document.uri.toString() === targetUri.toString()
+      ? activeEditor.selection
+      : undefined;
 
   focusChatView();
   postToWebview({
     type: "composer.addFileContext",
     context: {
       path: targetUri.fsPath,
-      languageId: activeEditor?.document.uri.toString() === targetUri.toString() ? activeEditor.document.languageId : undefined,
+      languageId:
+        activeEditor?.document.uri.toString() === targetUri.toString()
+          ? activeEditor.document.languageId
+          : undefined,
       line: selection ? selection.start.line + 1 : undefined,
       endLine: selection && !selection.isEmpty ? selection.end.line + 1 : undefined,
     },
@@ -2624,11 +3439,7 @@ async function addSelectionToChatContext(): Promise<void> {
 /**
  * Open a file in the VS Code editor, optionally at a specific line.
  */
-async function handleOpenFile(
-  filePath: string,
-  line?: number,
-  endLine?: number,
-): Promise<void> {
+async function handleOpenFile(filePath: string, line?: number, endLine?: number): Promise<void> {
   try {
     // Resolve relative paths against workspace folder
     let uri: vscode.Uri;

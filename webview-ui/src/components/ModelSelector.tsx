@@ -6,10 +6,25 @@ import { ModelPreviewCard } from "./ModelPreviewCard";
 import type { ModelEntry } from "../types/modelInfo";
 import { formatCompactContext, formatModelName, getModelContext } from "../utils/modelPreviewUtils";
 
+export interface ModelSelectorExtraOption {
+  value: string;
+  label: string;
+  description?: string;
+  icon?: string;
+}
+
+export interface ModelSelectorExtraSection {
+  title: string;
+  options: ModelSelectorExtraOption[];
+}
+
 interface ModelSelectorProps {
   open: boolean;
   onClose: () => void;
   currentModel?: string;
+  onSelectModel?: (model: ModelEntry) => void;
+  onSelectValue?: (value: string) => void;
+  extraSections?: ModelSelectorExtraSection[];
 }
 
 interface PreviewState {
@@ -22,7 +37,14 @@ interface PreviewState {
  * Searchable model selector dropdown.
  * Opens above the model pill, shows available models from the runtime.
  */
-export function ModelSelector({ open, onClose, currentModel }: ModelSelectorProps) {
+export function ModelSelector({
+  open,
+  onClose,
+  currentModel,
+  onSelectModel,
+  onSelectValue,
+  extraSections = [],
+}: ModelSelectorProps) {
   const [search, setSearch] = useState("");
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [preview, setPreview] = useState<PreviewState | undefined>();
@@ -92,18 +114,37 @@ export function ModelSelector({ open, onClose, currentModel }: ModelSelectorProp
     );
   });
 
-  const previewModel = preview?.key
-    ? filtered.find((m) => modelKey(m) === preview.key)
-    : undefined;
+  const previewModel = preview?.key ? filtered.find((m) => modelKey(m) === preview.key) : undefined;
   const currentModelEntry = models.find((m) => isCurrentModel(m, currentModel));
   const currentModelLabel = currentModelEntry
     ? currentModelEntry.name || formatModelName(currentModelEntry.id)
     : formatCurrentModelLabel(currentModel);
 
-  const handleSelect = useCallback((model: ModelEntry) => {
-    vscode.postMessage({ type: "runtime.setModel", provider: model.provider, modelId: model.id });
-    onClose();
-  }, [onClose]);
+  const handleSelect = useCallback(
+    (model: ModelEntry) => {
+      if (onSelectValue) {
+        onSelectValue(modelKey(model));
+      } else if (onSelectModel) {
+        onSelectModel(model);
+      } else {
+        vscode.postMessage({
+          type: "runtime.setModel",
+          provider: model.provider,
+          modelId: model.id,
+        });
+      }
+      onClose();
+    },
+    [onClose, onSelectModel, onSelectValue],
+  );
+
+  const handleSelectValue = useCallback(
+    (value: string) => {
+      onSelectValue?.(value);
+      onClose();
+    },
+    [onClose, onSelectValue],
+  );
 
   const handleToggleFavorite = useCallback((e: React.MouseEvent, model: ModelEntry) => {
     e.stopPropagation();
@@ -118,6 +159,13 @@ export function ModelSelector({ open, onClose, currentModel }: ModelSelectorProp
   }, []);
 
   if (!open) return null;
+
+  const visibleExtraSections = extraSections
+    .map((section) => ({
+      ...section,
+      options: section.options.filter((option) => optionMatches(option, search)),
+    }))
+    .filter((section) => section.options.length > 0);
 
   // Split filtered models into favorites and the rest
   const favoriteModels = filtered.filter((m) => favoriteKeys.includes(`${m.provider}/${m.id}`));
@@ -139,12 +187,35 @@ export function ModelSelector({ open, onClose, currentModel }: ModelSelectorProp
           />
         </div>
         <div className="omp-model-selector-list">
-          {loading && (
-            <div className="omp-model-selector-loading">Loading models...</div>
-          )}
-          {!loading && filtered.length === 0 && (
+          {loading && <div className="omp-model-selector-loading">Loading models...</div>}
+          {!loading && filtered.length === 0 && visibleExtraSections.length === 0 && (
             <div className="omp-model-selector-empty">No models found</div>
           )}
+
+          {visibleExtraSections.map((section) => (
+            <div
+              key={section.title}
+              className="omp-model-selector-group omp-model-selector-extra-group"
+            >
+              <div className="omp-model-selector-provider">{section.title}</div>
+              {section.options.map((option) => (
+                <button
+                  key={`${section.title}:${option.value}`}
+                  className={`omp-model-selector-item${option.value === currentModel ? " omp-model-selector-item--active" : ""}`}
+                  onClick={() => handleSelectValue(option.value)}
+                >
+                  <span className="omp-model-selector-icon">
+                    <i className={`codicon ${option.icon ?? "codicon-symbol-class"}`} />
+                  </span>
+                  <span className="omp-model-selector-name">{option.label}</span>
+                  {option.description && (
+                    <span className="omp-model-selector-meta">{option.description}</span>
+                  )}
+                  {option.value === currentModel && <i className="codicon codicon-check" />}
+                </button>
+              ))}
+            </div>
+          ))}
 
           {/* Favorites section */}
           {!loading && favoriteModels.length > 0 && (
@@ -165,24 +236,23 @@ export function ModelSelector({ open, onClose, currentModel }: ModelSelectorProp
           )}
 
           {/* Recommended / grouped section */}
-          {!loading && groupByProvider(nonFavoriteModels).map((group) => (
-            <div key={group.provider} className="omp-model-selector-group">
-              <div className="omp-model-selector-provider">
-                {group.provider}
+          {!loading &&
+            groupByProvider(nonFavoriteModels).map((group) => (
+              <div key={group.provider} className="omp-model-selector-group">
+                <div className="omp-model-selector-provider">{group.provider}</div>
+                {group.models.map((m) => (
+                  <ModelRow
+                    key={`${m.provider}/${m.id}`}
+                    model={m}
+                    isCurrent={isCurrentModel(m, currentModel)}
+                    isFavorite={favoriteKeys.includes(`${m.provider}/${m.id}`)}
+                    onSelect={handleSelect}
+                    onPreview={handlePreview}
+                    onToggleFavorite={handleToggleFavorite}
+                  />
+                ))}
               </div>
-              {group.models.map((m) => (
-                <ModelRow
-                  key={`${m.provider}/${m.id}`}
-                  model={m}
-                  isCurrent={isCurrentModel(m, currentModel)}
-                  isFavorite={favoriteKeys.includes(`${m.provider}/${m.id}`)}
-                  onSelect={handleSelect}
-                  onPreview={handlePreview}
-                  onToggleFavorite={handleToggleFavorite}
-                />
-              ))}
-            </div>
-          ))}
+            ))}
         </div>
         {preview && previewModel && (
           <div
@@ -213,7 +283,14 @@ interface ModelRowProps {
   onToggleFavorite: (e: React.MouseEvent, model: ModelEntry) => void;
 }
 
-function ModelRow({ model, isCurrent, isFavorite, onSelect, onPreview, onToggleFavorite }: ModelRowProps) {
+function ModelRow({
+  model,
+  isCurrent,
+  isFavorite,
+  onSelect,
+  onPreview,
+  onToggleFavorite,
+}: ModelRowProps) {
   const displayName = model.name || formatModelName(model.id);
   const context = getModelContext(model);
 
@@ -251,11 +328,21 @@ function ModelRow({ model, isCurrent, isFavorite, onSelect, onPreview, onToggleF
 
 function isCurrentModel(m: ModelEntry, currentModel?: string): boolean {
   if (!currentModel) return false;
-  return currentModel.includes(m.id) || `${m.provider}/${m.id}` === currentModel;
+  return currentModel === modelKey(m) || currentModel.includes(m.id);
 }
 
 function modelKey(model: ModelEntry): string {
   return `${model.provider}/${model.id}`;
+}
+
+function optionMatches(option: ModelSelectorExtraOption, search: string): boolean {
+  if (!search) return true;
+  const query = search.toLowerCase();
+  return (
+    option.value.toLowerCase().includes(query) ||
+    option.label.toLowerCase().includes(query) ||
+    (option.description?.toLowerCase().includes(query) ?? false)
+  );
 }
 
 function formatCurrentModelLabel(currentModel?: string): string | undefined {
@@ -276,7 +363,11 @@ function calculatePreviewPlacement(anchor: DOMRect): Omit<PreviewState, "key"> {
   const placement = rightSpace >= width || rightSpace >= leftSpace ? "right" : "left";
   const rawLeft = placement === "right" ? rightLeft : leftLeft;
   const left = clamp(rawLeft, margin, Math.max(margin, window.innerWidth - width - margin));
-  const top = clamp(anchor.top - 12, margin, Math.max(margin, window.innerHeight - maxHeight - margin));
+  const top = clamp(
+    anchor.top - 12,
+    margin,
+    Math.max(margin, window.innerHeight - maxHeight - margin),
+  );
 
   return {
     placement,

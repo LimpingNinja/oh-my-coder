@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { useSettings } from "../SettingsContext";
 import { SettingsRow } from "../SettingsRow";
+import {
+  joinThinkingSuffix,
+  ModelReferencePicker,
+  splitThinkingSuffix,
+  THINKING_LEVEL_OPTIONS,
+} from "../ModelReferencePicker";
 
 const SUB_TABS = ["Roles", "Model", "Sampling", "Retries"] as const;
 type SubTab = (typeof SUB_TABS)[number];
@@ -22,7 +28,7 @@ const resolveKey = (source: Record<string, unknown>, key: string): unknown => {
 const getSettingValue = (
   draft: Record<string, unknown>,
   config: Record<string, unknown>,
-  key: string
+  key: string,
 ): unknown => {
   if (key in draft) return draft[key];
   const draftNestedValue = resolveKey(draft, key);
@@ -85,7 +91,10 @@ function ModelSubTab() {
           <option value="xhigh">Extra High</option>
         </select>
       </SettingsRow>
-      <SettingsRow title="Hide Thinking Blocks" description="Hide thinking blocks in assistant responses">
+      <SettingsRow
+        title="Hide Thinking Blocks"
+        description="Hide thinking blocks in assistant responses"
+      >
         <input
           type="checkbox"
           className="omp-settings-toggle"
@@ -139,7 +148,7 @@ function NumberPreset({
   const current = getSettingValue(
     draft as Record<string, unknown>,
     config as Record<string, unknown>,
-    settingKey
+    settingKey,
   );
 
   return (
@@ -279,6 +288,38 @@ function RetriesSubTab() {
   );
 }
 
+function ModelRoleValueEditor({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const { modelRef, thinkingLevel } = splitThinkingSuffix(value);
+  return (
+    <div className="omp-settings-model-role-editor">
+      <ModelReferencePicker
+        value={modelRef}
+        placeholder="Choose model"
+        onChange={(nextModel) => onChange(joinThinkingSuffix(nextModel, thinkingLevel))}
+      />
+      <select
+        className="omp-settings-select omp-settings-thinking-select"
+        value={thinkingLevel}
+        onChange={(event) => onChange(joinThinkingSuffix(modelRef, event.target.value))}
+        disabled={!modelRef}
+      >
+        <option value="">Thinking: unset</option>
+        {THINKING_LEVEL_OPTIONS.map((level) => (
+          <option key={level} value={level}>
+            {level}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function RolesSubTab() {
   const { config, draft, updateSetting } = useSettings();
 
@@ -333,7 +374,10 @@ function RolesSubTab() {
   };
 
   const removeCycleItem = (index: number) => {
-    updateSetting("cycleOrder", cycleOrder.filter((_, i) => i !== index));
+    updateSetting(
+      "cycleOrder",
+      cycleOrder.filter((_, i) => i !== index),
+    );
   };
 
   const [newCycleRole, setNewCycleRole] = useState("");
@@ -348,18 +392,14 @@ function RolesSubTab() {
       {/* Model Roles Section */}
       <div className="omp-settings-section">
         <h3 className="omp-settings-section-title">Model Roles</h3>
-        <p className="omp-settings-section-desc">Assign models to named roles for quick switching</p>
+        <p className="omp-settings-section-desc">
+          Assign models to named roles for quick switching
+        </p>
         <div className="omp-settings-roles-editor">
           {Object.entries(roles).map(([role, model]) => (
             <div key={role} className="omp-settings-role-edit-row">
               <span className="omp-settings-role-name">{role}</span>
-              <input
-                type="text"
-                className="omp-settings-input"
-                value={model}
-                onChange={e => updateRole(role, e.target.value)}
-                placeholder="provider/model-id:thinking-level"
-              />
+              <ModelRoleValueEditor value={model} onChange={(value) => updateRole(role, value)} />
               <button
                 className="omp-settings-icon-btn"
                 onClick={() => removeRole(role)}
@@ -374,11 +414,13 @@ function RolesSubTab() {
               type="text"
               className="omp-settings-input omp-settings-input--small"
               value={newRoleName}
-              onChange={e => setNewRoleName(e.target.value)}
+              onChange={(e) => setNewRoleName(e.target.value)}
               placeholder="New role name"
-              onKeyDown={e => e.key === "Enter" && addRole()}
+              onKeyDown={(e) => e.key === "Enter" && addRole()}
             />
-            <button className="omp-settings-btn-small" onClick={addRole}>Add Role</button>
+            <button className="omp-settings-btn-small" onClick={addRole}>
+              Add Role
+            </button>
           </div>
         </div>
       </div>
@@ -420,14 +462,24 @@ function RolesSubTab() {
             <select
               className="omp-settings-select"
               value={newCycleRole}
-              onChange={e => setNewCycleRole(e.target.value)}
+              onChange={(e) => setNewCycleRole(e.target.value)}
             >
               <option value="">Add role to cycle...</option>
-              {Object.keys(roles).filter(r => !cycleOrder.includes(r)).map(r => (
-                <option key={r} value={r}>{r}</option>
-              ))}
+              {Object.keys(roles)
+                .filter((r) => !cycleOrder.includes(r))
+                .map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
             </select>
-            <button className="omp-settings-btn-small" onClick={addCycleItem} disabled={!newCycleRole}>Add</button>
+            <button
+              className="omp-settings-btn-small"
+              onClick={addCycleItem}
+              disabled={!newCycleRole}
+            >
+              Add
+            </button>
           </div>
         </div>
       </div>
@@ -435,7 +487,9 @@ function RolesSubTab() {
       {/* Enabled Models Section */}
       <div className="omp-settings-section">
         <h3 className="omp-settings-section-title">Enabled Models</h3>
-        <p className="omp-settings-section-desc">Models available for cycling (empty = all available)</p>
+        <p className="omp-settings-section-desc">
+          Models available for cycling (empty = all available)
+        </p>
         <div className="omp-settings-enabled-models">
           {enabledModels.length === 0 ? (
             <p className="omp-settings-placeholder">All models enabled (no filter)</p>
@@ -445,7 +499,12 @@ function RolesSubTab() {
                 <span>{model}</span>
                 <button
                   className="omp-settings-icon-btn"
-                  onClick={() => updateSetting("enabledModels", enabledModels.filter((_, idx) => idx !== i))}
+                  onClick={() =>
+                    updateSetting(
+                      "enabledModels",
+                      enabledModels.filter((_, idx) => idx !== i),
+                    )
+                  }
                   title="Remove"
                 >
                   <i className="codicon codicon-close" />

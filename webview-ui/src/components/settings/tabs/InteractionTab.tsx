@@ -34,6 +34,14 @@ export function InteractionTab() {
       | number
       | undefined;
 
+
+  const getBool = (key: string, defaultValue: boolean): boolean => {
+    const value = get(key);
+    return typeof value === "boolean" ? value : defaultValue;
+  };
+
+  const sttEnabled = getBool("stt.enabled", false);
+
   return (
     <div>
       {/* § Conversation Flow */}
@@ -72,7 +80,7 @@ export function InteractionTab() {
             <option value="wait">Wait</option>
           </select>
         </SettingsRow>
-        <SettingsRow title="Loop Mode" description="Behavior when the agent completes a loop" last>
+        <SettingsRow title="Loop Mode" description="Behavior when the agent completes a loop">
           <select
             className="omp-settings-select"
             value={String(get("loop.mode") ?? "prompt")}
@@ -81,6 +89,17 @@ export function InteractionTab() {
             <option value="prompt">Prompt</option>
             <option value="compact">Compact</option>
             <option value="reset">Reset</option>
+          </select>
+        </SettingsRow>
+        <SettingsRow title="Double-Escape Action" description="Action when pressing Escape twice with empty input" last>
+          <select
+            className="omp-settings-select"
+            value={String(get("doubleEscapeAction") ?? "tree")}
+            onChange={(e) => updateSetting("doubleEscapeAction", e.target.value)}
+          >
+            <option value="branch">Branch</option>
+            <option value="tree">Tree</option>
+            <option value="none">None</option>
           </select>
         </SettingsRow>
       </div>
@@ -105,12 +124,20 @@ export function InteractionTab() {
             onChange={(e) => updateSetting("startup.quiet", e.target.checked)}
           />
         </SettingsRow>
-        <SettingsRow title="Check for Updates" description="Check for new versions on startup" last>
+        <SettingsRow title="Check for Updates" description="Check for new versions on startup">
           <input
             type="checkbox"
             className="omp-settings-toggle"
-            checked={get("startup.checkUpdate") !== false}
+            checked={getBool("startup.checkUpdate", true)}
             onChange={(e) => updateSetting("startup.checkUpdate", e.target.checked)}
+          />
+        </SettingsRow>
+        <SettingsRow title="Collapse Changelog" description="Show condensed changelog after updates" last>
+          <input
+            type="checkbox"
+            className="omp-settings-toggle"
+            checked={getBool("collapseChangelog", false)}
+            onChange={(e) => updateSetting("collapseChangelog", e.target.checked)}
           />
         </SettingsRow>
       </div>
@@ -161,7 +188,6 @@ export function InteractionTab() {
         <SettingsRow
           title="Autocomplete Max Visible"
           description="Maximum number of autocomplete suggestions shown"
-          last
         >
           <select
             className="omp-settings-select"
@@ -176,6 +202,52 @@ export function InteractionTab() {
             <option value="20">20</option>
           </select>
         </SettingsRow>
+        <SettingsRow title="Session Tree Filter" description="Default filter mode when opening the session tree" last>
+          <select
+            className="omp-settings-select"
+            value={String(get("treeFilterMode") ?? "default")}
+            onChange={(e) => updateSetting("treeFilterMode", e.target.value)}
+          >
+            <option value="default">Default</option>
+            <option value="no-tools">No tools</option>
+            <option value="user-only">User only</option>
+            <option value="labeled-only">Labeled only</option>
+            <option value="all">All</option>
+          </select>
+        </SettingsRow>
+      </div>
+
+      {/* § Speech */}
+      <div className="omp-settings-section">
+        <h3 className="omp-settings-section-title">Speech</h3>
+        <p className="omp-settings-section-desc">Speech-to-text input configuration</p>
+        <SettingsRow title="Speech-to-Text" description="Enable speech-to-text input via microphone" last={!sttEnabled}>
+          <input
+            type="checkbox"
+            className="omp-settings-toggle"
+            checked={sttEnabled}
+            onChange={(e) => updateSetting("stt.enabled", e.target.checked)}
+          />
+        </SettingsRow>
+        {sttEnabled && (
+          <SettingsRow title="Speech Model" description="Whisper model size" last>
+            <select
+              className="omp-settings-select"
+              value={String(get("stt.modelName") ?? "base.en")}
+              onChange={(e) => updateSetting("stt.modelName", e.target.value)}
+            >
+              <option value="tiny">tiny</option>
+              <option value="tiny.en">tiny.en</option>
+              <option value="base">base</option>
+              <option value="base.en">base.en</option>
+              <option value="small">small</option>
+              <option value="small.en">small.en</option>
+              <option value="medium">medium</option>
+              <option value="medium.en">medium.en</option>
+              <option value="large">large</option>
+            </select>
+          </SettingsRow>
+        )}
       </div>
     </div>
   );

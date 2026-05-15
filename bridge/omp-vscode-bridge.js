@@ -14,6 +14,8 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 export default function (pi) {
   // OMP product identity env vars are primary; PI_ prefixed vars are
   // upstream runtime compatibility — the extension host injects both.
@@ -31,6 +33,7 @@ export default function (pi) {
   let statusRefreshInFlight = false;
   let statusGeneration = 0;
   let lastStatusKey;
+  let latestContext;
 
   const callBridge = async (method, params = {}) => {
     const response = await fetch(`${bridgeUrl}/rpc`, {
@@ -51,6 +54,56 @@ export default function (pi) {
     }
     return payload?.result;
   };
+
+  const importRuntimeTaskModule = async () => {
+    const errors = [];
+
+    const tryImport = async (label, loader) => {
+      try {
+        const mod = await loader();
+        if (typeof mod?.discoverAgents === "function") return mod;
+        errors.push(`${label}: discoverAgents export missing`);
+      } catch (err) {
+        errors.push(`${label}: ${err?.message || err}`);
+      }
+      return undefined;
+    };
+
+    const direct = await tryImport(
+      "direct subpath import",
+      () => import("@oh-my-pi/pi-coding-agent/task"),
+    );
+    if (direct) return direct;
+
+    const runtimeParents = [
+      typeof Bun !== "undefined" ? Bun.main : undefined,
+      process.argv?.[1],
+      process.execPath,
+    ].filter(Boolean);
+
+    for (const parent of runtimeParents) {
+      const resolved = await tryImport(`createRequire(${parent})`, async () => {
+        const requireFromRuntime = createRequire(parent);
+        const resolvedPath = requireFromRuntime.resolve("@oh-my-pi/pi-coding-agent/task");
+        return import(pathToFileURL(resolvedPath).href);
+      });
+      if (resolved) return resolved;
+    }
+
+    throw new Error(errors.join("; "));
+  };
+
+  const serializeAgent = (agent) => ({
+    name: agent.name,
+    description: agent.description ?? "",
+    systemPrompt: agent.systemPrompt ?? "",
+    tools: agent.tools,
+    spawns: agent.spawns,
+    model: agent.model,
+    thinkingLevel: agent.thinkingLevel,
+    source: agent.source ?? "bundled",
+    filePath: agent.filePath,
+  });
 
   const truncateText = (text) => {
     const lines = text.split("\n");
@@ -218,15 +271,36 @@ export default function (pi) {
     } catch {}
   };
 
+
+  const parseSkillDescription = (content) => {
+    if (!content.startsWith("---"))
+      return (
+        content
+          .split("\n")
+          .find((l) => l.trim())
+          ?.slice(0, 80) || ""
+      );
+    const endIdx = content.indexOf("\n---", 3);
+    if (endIdx === -1) return "";
+    const frontmatter = content.slice(4, endIdx);
+    const descLine = frontmatter.split("\n").find((l) => l.startsWith("description:"));
+    return descLine ? descLine.slice(12).trim() : "";
+  };
   const pushSlashCommands = async () => {
     const commands = [];
 
     const parseDescription = (content) => {
-      if (!content.startsWith("---")) return content.split("\n").find(l => l.trim())?.slice(0, 80) || "";
+      if (!content.startsWith("---"))
+        return (
+          content
+            .split("\n")
+            .find((l) => l.trim())
+            ?.slice(0, 80) || ""
+        );
       const endIdx = content.indexOf("\n---", 3);
       if (endIdx === -1) return "";
       const frontmatter = content.slice(4, endIdx);
-      const descLine = frontmatter.split("\n").find(l => l.startsWith("description:"));
+      const descLine = frontmatter.split("\n").find((l) => l.startsWith("description:"));
       return descLine ? descLine.slice(12).trim() : "";
     };
 
@@ -290,17 +364,126 @@ export default function (pi) {
     }
   };
 
+  const pushAgents = async () => {
+    try {
+      const { discoverAgents } = await importRuntimeTaskModule();
+      const { agents } = await discoverAgents(process.cwd());
+      process.stderr.write(
+        `[omp-bridge] Discovered ${agents.length} agents via runtime discovery\n`,
+      );
+
+      await callBridge("pushAgents", {
+        agents: agents.map(serializeAgent),
+      });
+      process.stderr.write(`[omp-bridge] Pushed ${agents.length} agents to VS Code\n`);
+    } catch (err) {
+      process.stderr.write(`[omp-bridge] Agent discovery failed: ${err?.message || err}\n`);
+      // Fallback: push empty to clear stale state
+      try {
+        await callBridge("pushAgents", { agents: [] });
+      } catch {}
+    }
+  };
+
+
+  // ─── Provider Status ──────────────────────────────────────────────────────────
+  const PROVIDER_META = [
+    { id: "anthropic", name: "Anthropic", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["ANTHROPIC_API_KEY"] },
+    { id: "openai", name: "OpenAI", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["OPENAI_API_KEY"] },
+    { id: "google", name: "Google AI", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"] },
+    { id: "openai-codex", name: "OpenAI Codex", authMethod: "oauth", badgeLabel: "OAuth", envVars: [] },
+    { id: "groq", name: "Groq", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["GROQ_API_KEY"] },
+    { id: "deepseek", name: "DeepSeek", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["DEEPSEEK_API_KEY"] },
+    { id: "mistral", name: "Mistral", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["MISTRAL_API_KEY"] },
+    { id: "openrouter", name: "OpenRouter", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["OPENROUTER_API_KEY"] },
+    { id: "ollama", name: "Ollama", authMethod: "none", badgeLabel: "Local", envVars: [] },
+    { id: "ollama-cloud", name: "Ollama Cloud", authMethod: "oauth", badgeLabel: "OAuth", envVars: ["OLLAMA_CLOUD_API_KEY"] },
+    { id: "lm-studio", name: "LM Studio", authMethod: "none", badgeLabel: "Local", envVars: [] },
+    { id: "fireworks", name: "Fireworks", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["FIREWORKS_API_KEY"] },
+    { id: "xai", name: "xAI", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["XAI_API_KEY"] },
+    { id: "together", name: "Together", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["TOGETHER_API_KEY"] },
+    { id: "kimi-code", name: "Kimi", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["KIMI_API_KEY"] },
+    { id: "cursor", name: "Cursor", authMethod: "oauth", badgeLabel: "OAuth", envVars: ["CURSOR_API_KEY"] },
+    { id: "amazon-bedrock", name: "Amazon Bedrock", authMethod: "apiKey", badgeLabel: "AWS Credentials", envVars: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION"] },
+    { id: "huggingface", name: "Hugging Face", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["HUGGINGFACE_HUB_TOKEN", "HF_TOKEN"] },
+    { id: "cerebras", name: "Cerebras", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["CEREBRAS_API_KEY"] },
+    { id: "nvidia", name: "NVIDIA", authMethod: "apiKey", badgeLabel: "API Key", envVars: ["NVIDIA_API_KEY"] },
+  ];
+
+  /** Read models.yml provider overrides using YAML parser. */
+  function readModelsYml() {
+    try {
+      const configDir = process.env.PI_CONFIG_DIR || ".omp";
+      const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), configDir, "agent");
+      const ymlPath = path.join(agentDir, "models.yml");
+      if (!fs.existsSync(ymlPath)) return null;
+      const raw = fs.readFileSync(ymlPath, "utf-8");
+      const { parse } = require("yaml");
+      const parsed = parse(raw);
+      if (!parsed || typeof parsed !== "object" || !parsed.providers) return null;
+      return parsed.providers;
+    } catch {
+      return null;
+    }
+  }
+
+  function getProviderStatus() {
+    const modelsYml = readModelsYml();
+    const availableModels = latestContext?.modelRegistry?.getAvailable?.() ?? [];
+
+    return PROVIDER_META.map((meta) => {
+      const envVarsSet = {};
+      let anyEnvSet = false;
+      for (const v of meta.envVars) {
+        const isSet = !!process.env[v];
+        envVarsSet[v] = isSet;
+        if (isSet) anyEnvSet = true;
+      }
+
+      const providerConf = modelsYml?.[meta.id];
+      const hasConfigKey = !!providerConf?.apiKey;
+      const hasConfigBaseUrl = !!providerConf?.baseUrl;
+
+      let modelsAvailable = 0;
+      for (const m of availableModels) {
+        if (m.provider === meta.id) modelsAvailable++;
+      }
+
+      const configured = meta.authMethod === "none"
+        ? (modelsAvailable > 0 || hasConfigBaseUrl)
+        : (anyEnvSet || hasConfigKey);
+
+      return {
+        id: meta.id,
+        name: meta.name,
+        authMethod: meta.authMethod,
+        badgeLabel: meta.badgeLabel,
+        envVars: meta.envVars,
+        envVarsSet,
+        hasConfigKey,
+        hasConfigBaseUrl,
+        configured,
+        modelsAvailable,
+      };
+    });
+  }
+
   // ─── Reverse Bridge Server ────────────────────────────────────────────────────
   let reverseBridgeServer;
 
   const startReverseBridge = async () => {
+    if (reverseBridgeServer) return;
     reverseBridgeServer = Bun.serve({
       port: 0, // OS assigns available port
       fetch: async (req) => {
         // Verify auth
-        const auth = req.headers.get("x-omp-authorization") || req.headers.get("x-pi-vscode-authorization");
+        const auth =
+          req.headers.get("x-omp-authorization") || req.headers.get("x-pi-vscode-authorization");
         if (auth !== bridgeToken) {
-          return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "content-type": "application/json" } });
+          return new Response(JSON.stringify({ error: "Unauthorized" }), {
+            status: 401,
+            headers: { "content-type": "application/json" },
+          });
         }
 
         const url = new URL(req.url);
@@ -311,9 +494,11 @@ export default function (pi) {
               return Response.json({ ok: true, pid: process.pid });
 
             case "/settings": {
-              if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+              if (req.method !== "POST")
+                return Response.json({ error: "Method not allowed" }, { status: 405 });
               const patch = await req.json();
-              if (!patch || typeof patch !== "object") return Response.json({ error: "Invalid body" }, { status: 400 });
+              if (!patch || typeof patch !== "object")
+                return Response.json({ error: "Invalid body" }, { status: 400 });
 
               const { settings } = pi.pi;
               let applied = 0;
@@ -331,9 +516,11 @@ export default function (pi) {
             }
 
             case "/get-settings": {
-              if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+              if (req.method !== "POST")
+                return Response.json({ error: "Method not allowed" }, { status: 405 });
               const { keys } = await req.json();
-              if (!Array.isArray(keys)) return Response.json({ error: "keys must be array" }, { status: 400 });
+              if (!Array.isArray(keys))
+                return Response.json({ error: "keys must be array" }, { status: 400 });
               const { settings } = pi.pi;
               const result = {};
               for (const key of keys) {
@@ -341,6 +528,108 @@ export default function (pi) {
               }
               return Response.json(result);
             }
+
+            case "/agents": {
+              try {
+                const { discoverAgents } = await importRuntimeTaskModule();
+                const { agents } = await discoverAgents(process.cwd());
+                return Response.json({
+                  ok: true,
+                  count: agents.length,
+                  agents: agents.map(serializeAgent),
+                });
+              } catch (err) {
+                const message = err?.message || String(err);
+                process.stderr.write(`[omp-bridge] /agents endpoint error: ${message}\n`);
+                return Response.json({ ok: false, error: message, agents: [] }, { status: 500 });
+              }
+            }
+
+            case "/models": {
+              const models = latestContext?.modelRegistry?.getAvailable?.() ?? [];
+              return Response.json({ ok: true, count: models.length, models });
+            }
+
+            case "/provider-status": {
+              const providers = getProviderStatus();
+              return Response.json({ providers });
+            }
+
+            case "/skills": {
+              try {
+                // Try runtime API first
+                let skills;
+                try {
+                  const mod = await import("@oh-my-pi/pi-coding-agent/extensibility/slash-commands");
+                  if (typeof mod.loadSlashCommands === "function") {
+                    const fileCommands = await mod.loadSlashCommands({ cwd: process.cwd() });
+                    skills = fileCommands.map((cmd) => ({
+                      name: cmd.name,
+                      description: cmd.description || "",
+                      source: cmd._source?.level === "user" || cmd._source?.level === "project"
+                        ? (cmd.source || "prompt")
+                        : (cmd.source || "prompt"),
+                      location: cmd._source?.level || "user",
+                      path: cmd.path || "",
+                    }));
+                  }
+                } catch {}
+
+                // If runtime API unavailable, return empty — don't show files
+                // that may not actually be loadable as runtime commands
+                if (!skills) {
+                  skills = [];
+                }
+
+                return Response.json({ ok: true, count: skills.length, skills });
+              } catch (err) {
+                const message = err?.message || String(err);
+                process.stderr.write(`[omp-bridge] /skills endpoint error: ${message}\n`);
+                return Response.json({ ok: false, error: message, skills: [] }, { status: 500 });
+              }
+            }
+
+            case "/mcp-servers": {
+              try {
+                let servers;
+
+                // Try runtime API first
+                try {
+                  const mcpMod = await import("@oh-my-pi/pi-coding-agent/mcp");
+                  if (typeof mcpMod.loadAllMCPConfigs === "function") {
+                    const { configs, sources } = await mcpMod.loadAllMCPConfigs(process.cwd());
+                    servers = Object.entries(configs).map(([name, cfg]) => {
+                      const sanitized = { ...cfg };
+                      delete sanitized.env;
+                      delete sanitized.headers;
+                      const src = sources?.[name];
+                      return {
+                        name,
+                        type: cfg.type || (cfg.command ? "stdio" : cfg.url ? "http" : "stdio"),
+                        status: "configured",
+                        enabled: cfg.enabled !== false,
+                        source: src?.level || "user",
+                        sourcePath: src?.path || "",
+                        config: sanitized,
+                      };
+                    });
+                  }
+                } catch {}
+
+                // If runtime API unavailable, return empty — don't show config
+                // files that the runtime may not have actually loaded
+                if (!servers) {
+                  servers = [];
+                }
+
+                return Response.json({ ok: true, count: servers.length, servers });
+              } catch (err) {
+                const message = err?.message || String(err);
+                process.stderr.write(`[omp-bridge] /mcp-servers endpoint error: ${message}\n`);
+                return Response.json({ ok: false, error: message, servers: [] }, { status: 500 });
+              }
+            }
+
 
             default:
               return Response.json({ error: "Not found" }, { status: 404 });
@@ -360,15 +649,19 @@ export default function (pi) {
       await callBridge("registerReverseBridge", { port });
       process.stderr.write(`[omp-bridge] Reverse bridge registered with extension host\n`);
     } catch (err) {
-      process.stderr.write(`[omp-bridge] Failed to register reverse bridge: ${err?.message || err}\n`);
+      process.stderr.write(
+        `[omp-bridge] Failed to register reverse bridge: ${err?.message || err}\n`,
+      );
     }
   };
 
   pi.on("session_start", async (_event, ctx) => {
+    latestContext = ctx;
     startStatusUpdates(ctx);
     await reportTerminalSession(ctx);
-    await pushSlashCommands();
     await startReverseBridge();
+    await pushSlashCommands();
+    await pushAgents();
   });
 
   const persistUserAttachments = async () => {
@@ -400,7 +693,8 @@ export default function (pi) {
     try {
       const metadata = await callBridge("getTurnMetadata");
       if (metadata && typeof metadata === "object") {
-        const hasData = metadata.model || metadata.tokens || metadata.costUsd || metadata.durationMs;
+        const hasData =
+          metadata.model || metadata.tokens || metadata.costUsd || metadata.durationMs;
         if (hasData) {
           pi.appendEntry("turn_metadata", metadata);
         }
@@ -1003,9 +1297,9 @@ export default function (pi) {
       "2. Clarify ambiguous instructions, 3. Get decisions on implementation choices as you work, " +
       "4. Offer choices to the user about what direction to take.\n\n" +
       "Usage notes:\n" +
-      "- When `custom` is enabled (default), a \"Type your own answer\" option is added automatically; don't include \"Other\" or catch-all options\n" +
+      '- When `custom` is enabled (default), a "Type your own answer" option is added automatically; don\'t include "Other" or catch-all options\n' +
       "- Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one\n" +
-      "- If you recommend a specific option, make that the first option in the list and add \"(Recommended)\" at the end of the label\n" +
+      '- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label\n' +
       "- Header must be 30 characters or less (maxLength: 30)",
     parameters: {
       type: "object",

@@ -102,14 +102,42 @@ export async function handleRpc(
     case "pushCommands": {
       const commands = params.commands;
       if (Array.isArray(commands)) {
-        state.onCommandsDiscovered?.(commands as Array<{ name: string; description?: string; source: string; location?: string; path?: string }>);
+        state.onCommandsDiscovered?.(
+          commands as Array<{
+            name: string;
+            description?: string;
+            source: string;
+            location?: string;
+            path?: string;
+          }>,
+        );
       }
       return { received: true, count: Array.isArray(commands) ? commands.length : 0 };
+    }
+    case "pushAgents": {
+      const agents = params.agents;
+      if (Array.isArray(agents)) {
+        state.onAgentsDiscovered?.(
+          agents as Array<{
+            name: string;
+            description: string;
+            systemPrompt: string;
+            tools?: string[];
+            spawns?: string[] | "*";
+            model?: string | string[];
+            thinkingLevel?: string;
+            source: string;
+            filePath?: string;
+          }>,
+        );
+      }
+      return { received: true, count: Array.isArray(agents) ? agents.length : 0 };
     }
     case "registerReverseBridge": {
       const port = params.port as number;
       if (typeof port === "number" && port > 0) {
         state.reverseBridgePort = port;
+        state.onReverseBridgeRegistered?.(port);
       }
       return { registered: true, port };
     }
