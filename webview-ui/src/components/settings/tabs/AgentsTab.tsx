@@ -458,6 +458,19 @@ function AgentEditView({
   const [systemPrompt, setSystemPrompt] = useState(agent.systemPrompt);
   const [toolsText, setToolsText] = useState(agent.tools?.join(", ") ?? "");
   const [thinkingLevel, setThinkingLevel] = useState(agent.thinkingLevel ?? "");
+
+  const ALL_TOOL_NAMES = [
+    "read", "search", "find", "edit", "write", "bash",
+    "ast_grep", "ast_edit", "lsp", "debug", "eval",
+    "browser", "web_search", "fetch", "github",
+    "task", "irc", "recipe", "checkpoint", "notebook",
+    "render_mermaid", "inspect_image", "calc", "generate_image",
+    "todo_write", "question", "yield",
+  ];
+
+  const selectedTools = new Set(
+    toolsText.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)
+  );
   const saveAgent = () => {
     getVSCodeAPI().postMessage({
       type: "settings.agent.write",
@@ -538,48 +551,63 @@ function AgentEditView({
         <div className="omp-settings-section">
           <SettingsRow
             title="Model Override"
-            description="Override the default model for this agent"
+            description="Override the default model and thinking level for this agent"
+            last
           >
-            <ModelReferencePicker
-              value={overrides[agent.name] ?? ""}
-              defaultModel={agentDefaultModel(agent)}
-              roleNames={modelRoleNames}
-              allowUnset
-              allowRoles
-              onChange={(value) => onUpdateOverride(agent.name, value)}
-            />
+            <div className="omp-agent-model-thinking-row">
+              <ModelReferencePicker
+                value={overrides[agent.name] ?? ""}
+                defaultModel={agentDefaultModel(agent)}
+                roleNames={modelRoleNames}
+                allowUnset
+                allowRoles
+                onChange={(value) => onUpdateOverride(agent.name, value)}
+              />
+              <select
+                className="omp-settings-select omp-agent-thinking-select"
+                value={thinkingLevel}
+                onChange={(event) => setThinkingLevel(event.target.value)}
+                disabled={!editable}
+                title="Thinking level"
+              >
+                <option value="">Thinking: Unset</option>
+                {THINKING_LEVEL_OPTIONS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </div>
           </SettingsRow>
         </div>
       )}
 
       <div className="omp-settings-section">
-        <SettingsRow
-          title="Allowed Tools"
-          description="Comma-separated tool allowlist. Blank leaves tools unset."
-        >
-          <input
-            className="omp-settings-input"
-            value={toolsText}
-            onChange={(event) => setToolsText(event.target.value)}
-            readOnly={!editable}
-            placeholder="read, search, edit, yield"
-          />
-        </SettingsRow>
-        <SettingsRow title="Thinking Level" description="Agent-specific reasoning depth" last>
-          <select
-            className="omp-settings-select"
-            value={thinkingLevel}
-            onChange={(event) => setThinkingLevel(event.target.value)}
-            disabled={!editable}
-          >
-            <option value="">Unset</option>
-            {THINKING_LEVEL_OPTIONS.map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
-        </SettingsRow>
+        <label className="omp-edit-form-label">
+          Tools {toolsText ? "" : <span className="omp-edit-form-hint" style={{ display: "inline", marginLeft: 8 }}>All tools allowed</span>}
+        </label>
+        <div className="omp-agent-tools-tags">
+          {ALL_TOOL_NAMES.map((tool) => {
+            const selected = selectedTools.has(tool);
+            return (
+              <button
+                key={tool}
+                type="button"
+                className={`omp-agent-tool-tag${selected ? " omp-agent-tool-tag--active" : ""}`}
+                onClick={() => {
+                  if (!editable) return;
+                  const next = new Set(selectedTools);
+                  if (selected) next.delete(tool); else next.add(tool);
+                  const arr = Array.from(next);
+                  setToolsText(arr.join(", "));
+                }}
+                disabled={!editable}
+              >
+                {tool}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {agent.filePath && (

@@ -5350,6 +5350,61 @@ body {
   background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 }
 
+
+/* Agent edit: model + thinking same row */
+.omp-agent-model-thinking-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.omp-agent-thinking-select {
+  min-width: 130px;
+}
+
+/* Agent edit: tool tag selector */
+.omp-agent-tools-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px;
+  margin-top: 6px;
+  border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 60%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-input-background) 50%, transparent);
+}
+
+.omp-agent-tool-tag {
+  padding: 3px 10px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+
+.omp-agent-tool-tag:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.omp-agent-tool-tag--active {
+  background: color-mix(in srgb, var(--omp-success, #4ec9b0) 20%, transparent);
+  border-color: var(--omp-success, #4ec9b0);
+  color: var(--omp-success, #4ec9b0);
+  font-weight: 500;
+}
+
+.omp-agent-tool-tag--active:hover {
+  background: color-mix(in srgb, var(--omp-success, #4ec9b0) 30%, transparent);
+}
+
+.omp-agent-tool-tag:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .omp-settings-agent-tools {
   display: flex;
   flex-wrap: wrap;

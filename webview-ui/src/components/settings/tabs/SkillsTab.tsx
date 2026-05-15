@@ -180,15 +180,19 @@ export function SkillsTab() {
 interface FrontmatterField {
   key: string;
   label: string;
-  type: "text" | "toggle" | "globs";
+  type: "text" | "toggle" | "globs" | "tools";
   description: string;
   placeholder?: string;
 }
 
 const AVAILABLE_FRONTMATTER: FrontmatterField[] = [
-  { key: "description", label: "Description", type: "text", description: "Short description shown in skill listings", placeholder: "What this skill does" },
+  { key: "description", label: "Description", type: "text", description: "Short description shown in skill listings (max 1024 chars)", placeholder: "What this skill does and when to use it" },
   { key: "globs", label: "File Globs", type: "globs", description: "Activate this skill for matching files (comma-separated)", placeholder: "**/*.ts, src/**/*.tsx" },
   { key: "alwaysApply", label: "Always Apply", type: "toggle", description: "Include this skill in every conversation regardless of context" },
+  { key: "license", label: "License", type: "text", description: "License name or reference to bundled file", placeholder: "MIT" },
+  { key: "compatibility", label: "Compatibility", type: "text", description: "Environment requirements (max 500 chars)", placeholder: "Node.js >= 18, macOS or Linux" },
+  { key: "allowed-tools", label: "Allowed Tools", type: "tools", description: "Pre-approved tools when this skill is active (space-delimited)", placeholder: "read search bash" },
+  { key: "disable-model-invocation", label: "Disable Model Invocation", type: "toggle", description: "Hide from system prompt; only available via explicit /skill:name command" },
 ];
 
 function SkillEditView({
@@ -336,6 +340,14 @@ function SkillEditView({
                 />
                 <span className="omp-edit-form-toggle-label">Enabled</span>
               </label>
+            )}
+            {field.type === "tools" && (
+              <input
+                className="omp-edit-form-input"
+                value={String(fieldValues[field.key] ?? "")}
+                onChange={(e) => updateField(field.key, e.target.value)}
+                placeholder={field.placeholder}
+              />
             )}
           </div>
         ))}
