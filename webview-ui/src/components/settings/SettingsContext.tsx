@@ -41,6 +41,7 @@ export interface DiscoveredMcpServer {
   enabled: boolean;
   source: string;
   sourcePath: string;
+  toolCount?: number;
   config: Record<string, unknown>;
 }
 

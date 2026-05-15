@@ -5405,6 +5405,34 @@ body {
   background: color-mix(in srgb, var(--omp-success, #4ec9b0) 30%, transparent);
 }
 
+
+/* MCP section header with reload button */
+.omp-settings-section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.omp-mcp-server-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.omp-mcp-tool-count {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.omp-mcp-autodiscovered-badge {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
 .omp-agent-tool-tag:disabled {
   opacity: 0.5;
   cursor: not-allowed;

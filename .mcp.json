@@ -1,8 +1,12 @@
 {
   "mcpServers": {
     "Bifrost": {
-      "type": "sse",
-      "url": "http://localhost:8008/sse"
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y supergateway --sse http://localhost:8008/sse"
+      ],
+      "timeout": 600
     }
   }
 }

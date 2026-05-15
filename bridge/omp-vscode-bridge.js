@@ -603,13 +603,21 @@ export default function (pi) {
                       delete sanitized.env;
                       delete sanitized.headers;
                       const src = sources?.[name];
+                      // Get tool count from connected manager if available
+                      let toolCount = 0;
+                      const mgr = latestContext?.mcpManager;
+                      if (mgr && typeof mgr.getConnection === "function") {
+                        const conn = mgr.getConnection(name);
+                        toolCount = conn?.tools?.length ?? 0;
+                      }
                       return {
                         name,
                         type: cfg.type || (cfg.command ? "stdio" : cfg.url ? "http" : "stdio"),
-                        status: "configured",
+                        status: mgr?.getConnectionStatus?.(name) ?? "configured",
                         enabled: cfg.enabled !== false,
                         source: src?.level || "user",
                         sourcePath: src?.path || "",
+                        toolCount,
                         config: sanitized,
                       };
                     });

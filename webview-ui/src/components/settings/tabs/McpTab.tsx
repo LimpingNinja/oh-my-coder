@@ -112,7 +112,16 @@ export function McpTab() {
         {subTab === "Discovery" && (
           <div>
             <div className="omp-settings-section">
-              <h3 className="omp-settings-section-title">Discovered Servers</h3>
+              <div className="omp-settings-section-header-row">
+                <h3 className="omp-settings-section-title">Discovered Servers</h3>
+                <button
+                  className="omp-settings-icon-btn"
+                  onClick={() => getVSCodeAPI().postMessage({ type: "settings.load" })}
+                  title="Reload MCP servers"
+                >
+                  <i className="codicon codicon-refresh" />
+                </button>
+              </div>
               <div className="omp-settings-agent-actions">
                 <button className="omp-settings-btn-small" onClick={() => setNewServerScope("global")}>
                   Add Global Server
@@ -494,10 +503,38 @@ function McpServerCard({
             )}
           </div>
         </div>
-        {displayCommand && (
-          <span className="omp-settings-agent-desc">{displayCommand}</span>
-        )}
+        <div className="omp-mcp-server-meta">
+          {displayCommand && (
+            <span className="omp-settings-agent-desc">{displayCommand}</span>
+          )}
+          {server.toolCount != null && server.toolCount > 0 && (
+            <span className="omp-mcp-tool-count">{server.toolCount} tool{server.toolCount > 1 ? "s" : ""}</span>
+          )}
+        </div>
       </div>
+      {managed && (
+        <input
+          type="checkbox"
+          className="omp-settings-toggle"
+          checked={server.enabled}
+          title={server.enabled ? "Disable server" : "Enable server"}
+          onChange={() => {
+            // Toggle enabled state by rewriting the server config
+            getVSCodeAPI().postMessage({
+              type: "settings.mcp.write",
+              scope: server.sourcePath.includes(".omp/agent/mcp.json") || server.sourcePath.includes(".omp\\agent\\mcp.json")
+                ? "global"
+                : "project",
+              server: {
+                name: server.name,
+                type: server.type as "stdio" | "http" | "sse",
+                ...server.config,
+                enabled: !server.enabled,
+              },
+            });
+          }}
+        />
+      )}
     </div>
   );
 }
