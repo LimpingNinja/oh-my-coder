@@ -630,6 +630,22 @@ export default function (pi) {
               }
             }
 
+            case "/mcp-reload": {
+              try {
+                const mcpManager = latestContext?.mcpManager;
+                if (mcpManager && typeof mcpManager.discoverAndConnect === "function") {
+                  await mcpManager.discoverAndConnect();
+                  process.stderr.write("[omp-bridge] MCP servers reloaded\n");
+                  return Response.json({ ok: true });
+                }
+                return Response.json({ ok: false, error: "No MCP manager available" }, { status: 503 });
+              } catch (err) {
+                const message = err?.message || String(err);
+                process.stderr.write(`[omp-bridge] /mcp-reload error: ${message}\n`);
+                return Response.json({ ok: false, error: message }, { status: 500 });
+              }
+            }
+
 
             default:
               return Response.json({ error: "Not found" }, { status: 404 });

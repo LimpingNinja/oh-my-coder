@@ -1475,6 +1475,7 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
         try {
           const filePath = await writeMcpServer(message.scope, message.server);
           outputChannel.appendLine(`[omp] wrote MCP server to: ${filePath}`);
+          await callReverseBridge("/mcp-reload");
           const config = await getOmpConfig();
           const settingsConfig = await getSettingsPanelConfig(config.raw);
           const agents = await fetchAgentsFromReverseBridge();
@@ -1506,6 +1507,7 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
         try {
           const filePath = await deleteMcpServer(message.scope, message.name);
           outputChannel.appendLine(`[omp] deleted MCP server from: ${filePath}`);
+          await callReverseBridge("/mcp-reload");
           const config = await getOmpConfig();
           const settingsConfig = await getSettingsPanelConfig(config.raw);
           const agents = await fetchAgentsFromReverseBridge();
