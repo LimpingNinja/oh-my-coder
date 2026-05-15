@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { getVSCodeAPI } from "../../../vscode";
-import { useSettings } from "../SettingsContext";
+import { useSettings, type DiscoveredSkill } from "../SettingsContext";
 import { SettingsRow } from "../SettingsRow";
 
 const resolveKey = (source: Record<string, unknown>, key: string): unknown => {
@@ -25,20 +25,14 @@ const getSettingValue = (
   return resolveKey(config, key);
 };
 
-interface DiscoveredSkill {
-  name: string;
-  description?: string;
-  source: "prompt" | "skill";
-  location: "user" | "project";
-  path: string;
-}
 
 type SubTab = "detected" | "settings";
 
 export function SkillsTab() {
   const [subTab, setSubTab] = useState<SubTab>("detected");
-  const { config, draft, updateSetting } = useSettings();
-  const skills = ((useSettings() as Record<string, unknown>).skills ?? []) as DiscoveredSkill[];
+  const [newSkillScope, setNewSkillScope] = useState<"global" | "project" | null>(null);
+  const [filter, setFilter] = useState("");
+  const { config, draft, updateSetting, skills } = useSettings();
 
   const get = (key: string) =>
     getSettingValue(draft as Record<string, unknown>, config as Record<string, unknown>, key);
@@ -46,8 +40,20 @@ export function SkillsTab() {
   const getBool = (key: string, defaultValue: boolean): boolean =>
     (get(key) ?? defaultValue) as boolean;
 
-  const userSkills = skills.filter((s) => s.location === "user");
-  const projectSkills = skills.filter((s) => s.location === "project");
+  const filteredSkills = skills.filter((s) => {
+    if (!filter) return true;
+    const q = filter.toLowerCase();
+    return s.name.toLowerCase().includes(q) || (s.description ?? "").toLowerCase().includes(q);
+  });
+
+  if (newSkillScope) {
+    return (
+      <SkillEditView
+        scope={newSkillScope}
+        onBack={() => setNewSkillScope(null)}
+      />
+    );
+  }
 
   return (
     <div>
@@ -70,19 +76,32 @@ export function SkillsTab() {
         {subTab === "detected" && (
           <div className="omp-settings-section">
             <h3 className="omp-settings-section-title">Discovered Skills</h3>
-            {skills.length === 0 ? (
+            <div className="omp-settings-agent-actions">
+              <button className="omp-settings-btn-small" onClick={() => setNewSkillScope("global")}>
+                Add Global Skill
+              </button>
+              <button className="omp-settings-btn-small" onClick={() => setNewSkillScope("project")}>
+                Add Project Skill
+              </button>
+            </div>
+            <input
+              className="omp-settings-input omp-settings-agent-filter"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter skills..."
+            />
+            {filteredSkills.length === 0 ? (
               <p className="omp-settings-section-desc">
-                No skills detected. Skills will appear when the runtime discovers command files.
+                {skills.length === 0
+                  ? "No skills detected. Skills will appear when the runtime discovers command files."
+                  : "No skills match the current filter."}
               </p>
             ) : (
-              <>
-                {userSkills.length > 0 && (
-                  <SkillGroup title="User" skills={userSkills} />
-                )}
-                {projectSkills.length > 0 && (
-                  <SkillGroup title="Project" skills={projectSkills} />
-                )}
-              </>
+              <div className="omp-settings-agent-overrides">
+                {filteredSkills.map((skill) => (
+                  <SkillRow key={skill.path} skill={skill} />
+                ))}
+              </div>
             )}
           </div>
         )}
@@ -138,49 +157,155 @@ export function SkillsTab() {
   );
 }
 
-function SkillGroup({ title, skills }: { title: string; skills: DiscoveredSkill[] }) {
+function SkillEditView({
+  scope,
+  onBack,
+}: {
+  scope: "global" | "project";
+  onBack: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [globsText, setGlobsText] = useState("");
+  const [alwaysApply, setAlwaysApply] = useState(false);
+  const [content, setContent] = useState("");
+
+  const saveSkill = () => {
+    const globs = globsText
+      .split(",")
+      .map((g) => g.trim())
+      .filter(Boolean);
+    getVSCodeAPI().postMessage({
+      type: "settings.skill.write",
+      scope,
+      skill: {
+        name,
+        description,
+        globs: globs.length > 0 ? globs : undefined,
+        alwaysApply: alwaysApply || undefined,
+        content,
+      },
+    });
+    onBack();
+  };
+
   return (
-    <div className="omp-settings-section" style={{ marginTop: 12 }}>
-      <h4 className="omp-settings-section-title" style={{ fontSize: 12, textTransform: "uppercase", opacity: 0.7 }}>
-        {title}
-      </h4>
-      {skills.map((skill) => (
-        <SkillRow key={skill.path} skill={skill} />
-      ))}
+    <div className="omp-settings-agent-edit">
+      <button onClick={onBack} className="omp-settings-back-btn">
+        <i className="codicon codicon-arrow-left" /> Back to list
+      </button>
+      <div className="omp-settings-agent-edit-heading">
+        <h3 className="omp-settings-agent-edit-title">New Skill</h3>
+        <span className={`omp-settings-agent-badge badge-${scope === "global" ? "global" : "project"}`}>
+          {scope}
+        </span>
+      </div>
+
+      <div className="omp-settings-section">
+        <SettingsRow title="Name" description="Skill identifier (becomes the filename)">
+          <input
+            className="omp-settings-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="my-skill"
+          />
+        </SettingsRow>
+        <SettingsRow title="Description" description="Short description shown in skill listings">
+          <textarea
+            className="omp-settings-textarea"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What this skill does"
+            rows={2}
+          />
+        </SettingsRow>
+        <SettingsRow title="Globs" description="Comma-separated file globs for activation (optional)">
+          <input
+            className="omp-settings-input"
+            value={globsText}
+            onChange={(e) => setGlobsText(e.target.value)}
+            placeholder="**/*.ts, src/**/*.tsx"
+          />
+        </SettingsRow>
+        <SettingsRow title="Always Apply" description="Apply this skill to every conversation" last>
+          <input
+            type="checkbox"
+            className="omp-settings-toggle"
+            checked={alwaysApply}
+            onChange={(e) => setAlwaysApply(e.target.checked)}
+          />
+        </SettingsRow>
+      </div>
+
+      <div className="omp-settings-section">
+        <label className="omp-settings-row-title">Content</label>
+        <textarea
+          className="omp-settings-textarea"
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          rows={12}
+          placeholder="Skill instructions / command content..."
+        />
+      </div>
+
+      <div className="omp-settings-agent-actions">
+        <button
+          className="omp-settings-btn-small"
+          onClick={saveSkill}
+          disabled={!name.trim() || !description.trim()}
+        >
+          Save Skill
+        </button>
+      </div>
     </div>
   );
 }
 
 function SkillRow({ skill }: { skill: DiscoveredSkill }) {
-  const [hovered, setHovered] = useState(false);
+  const canDelete = skill.location === "user" || skill.location === "project";
+
+  const deleteSkill = () => {
+    const ok = window.confirm(`Delete skill "${skill.name}"?\n\n${skill.path}`);
+    if (!ok) return;
+    getVSCodeAPI().postMessage({ type: "settings.skill.delete", path: skill.path });
+  };
 
   return (
-    <div
-      className="omp-skill-row"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <div className="omp-skill-row-top">
-        <span className="omp-skill-row-name">{skill.name}</span>
-        <span className={`omp-skill-badge omp-skill-badge--${skill.source}`}>
-          {skill.source === "prompt" ? "PROMPT" : "SKILL"}
-        </span>
-        <span className={`omp-skill-badge omp-skill-badge--${skill.location}`}>
-          {skill.location === "user" ? "USER" : "PROJECT"}
-        </span>
-        {hovered && (
-          <button
-            className="omp-settings-btn-small"
-            onClick={() => getVSCodeAPI().postMessage({ type: "openFile", path: skill.path })}
-          >
-            Open
-          </button>
+    <div className="omp-settings-agent-override-row omp-settings-agent-override-row--simple">
+      <div className="omp-settings-agent-override-meta">
+        <div className="omp-settings-agent-info">
+          <span className="omp-settings-agent-name">{skill.name}</span>
+          <span className={`omp-settings-agent-badge badge-${skill.source === "prompt" ? "bundled" : "config"}`}>
+            {skill.source === "prompt" ? "PROMPT" : "SKILL"}
+          </span>
+          <span className={`omp-settings-agent-badge badge-${skill.location === "user" ? "user" : "project"}`}>
+            {skill.location === "user" ? "USER" : "PROJECT"}
+          </span>
+          <div className="omp-settings-agent-row-actions">
+            <button
+              type="button"
+              className="omp-settings-icon-btn"
+              onClick={() => getVSCodeAPI().postMessage({ type: "openFile", path: skill.path })}
+              title="Open file"
+            >
+              <i className="codicon codicon-go-to-file" />
+            </button>
+            {canDelete && (
+              <button
+                type="button"
+                className="omp-settings-icon-btn"
+                onClick={deleteSkill}
+                title="Delete skill"
+              >
+                <i className="codicon codicon-trash" />
+              </button>
+            )}
+          </div>
+        </div>
+        {skill.description && (
+          <span className="omp-settings-agent-desc">{skill.description}</span>
         )}
       </div>
-      {skill.description && (
-        <div className="omp-skill-row-desc">{skill.description}</div>
-      )}
-      <div className="omp-skill-row-path">{skill.path}</div>
     </div>
   );
 }

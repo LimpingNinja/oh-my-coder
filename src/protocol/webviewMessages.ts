@@ -226,7 +226,32 @@ export type WebviewToExtensionMessage =
     }
   | { type: "settings.agent.delete"; filePath: string }
   | { type: "settings.omc.load" }
-  | { type: "settings.omc.save"; settings: { path?: string | null } };
+  | { type: "settings.omc.save"; settings: { path?: string | null } }
+  | {
+      type: "settings.skill.write";
+      scope: "global" | "project";
+      skill: {
+        name: string;
+        description: string;
+        globs?: string[];
+        alwaysApply?: boolean;
+        content: string;
+      };
+    }
+  | { type: "settings.skill.delete"; path: string }
+  | {
+      type: "settings.mcp.write";
+      scope: "global" | "project";
+      server: {
+        name: string;
+        type: "stdio" | "http" | "sse";
+        command?: string;
+        args?: string[];
+        url?: string;
+        timeout?: number;
+      };
+    }
+  | { type: "settings.mcp.delete"; scope: "global" | "project"; name: string };
 
 // ============================================================================
 // Extension → Webview messages
@@ -550,6 +575,10 @@ const webviewToExtensionTypes = new Set<string>([
   "settings.agent.delete",
   "settings.omc.load",
   "settings.omc.save",
+  "settings.skill.write",
+  "settings.skill.delete",
+  "settings.mcp.write",
+  "settings.mcp.delete",
 ]);
 
 const extensionToWebviewTypes = new Set<string>([

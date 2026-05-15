@@ -5195,6 +5195,12 @@ body {
   background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 }
 
+/* Single-column variant for skills/MCP that don't have a second picker column */
+.omp-settings-agent-override-row--simple {
+  display: flex;
+  grid-template-columns: unset;
+}
+
 .omp-settings-agent-override-meta {
   min-width: 0;
   display: flex;
@@ -5316,7 +5322,7 @@ body {
 }
 
 .omp-provider-configured-card:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 }
 
 .omp-provider-configured-card-main {
@@ -5364,10 +5370,11 @@ body {
   gap: 2px;
   opacity: 0;
   transition: opacity 0.12s ease;
-  margin-left: auto;
 }
 
-.omp-provider-configured-card:hover .omp-provider-configured-card-actions {
+.omp-provider-configured-card:hover .omp-provider-configured-card-actions,
+.omp-provider-configured-card-top:hover .omp-settings-agent-row-actions,
+.omp-provider-configured-card:hover .omp-settings-agent-row-actions {
   opacity: 1;
 }
 
@@ -5522,142 +5529,26 @@ body {
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
-/* ── Skills Tab ────────────────────────────────────── */
-.omp-skill-row {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--omp-border);
-}
+/* ── Skills & MCP badge colors (reusing agent badge base class) ──── */
 
-.omp-skill-row:last-child {
-  border-bottom: none;
-}
-
-.omp-skill-row:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
-}
-
-.omp-skill-row-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.omp-skill-row-name {
-  font-weight: 600;
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 13px;
-}
-
-.omp-skill-row-desc {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.omp-skill-row-path {
-  margin-top: 2px;
-  font-size: 11px;
-  font-family: var(--vscode-editor-font-family, monospace);
-  color: var(--vscode-descriptionForeground);
-  opacity: 0.8;
-}
-
-.omp-skill-badge {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-}
-
-.omp-skill-badge--prompt {
-  background: color-mix(in srgb, var(--vscode-charts-orange, #d18616) 18%, transparent);
-  color: var(--vscode-charts-orange, #d18616);
-}
-
-.omp-skill-badge--skill {
-  background: color-mix(in srgb, var(--omp-accent) 18%, transparent);
+/* "config" source badge (for SKILL type) */
+.omp-settings-agent-badge.badge-config {
+  background: color-mix(in srgb, var(--omp-accent) 20%, transparent);
   color: var(--omp-accent);
 }
 
-.omp-skill-badge--user {
-  background: color-mix(in srgb, var(--vscode-charts-purple, #c586c0) 18%, transparent);
-  color: var(--vscode-charts-purple, #c586c0);
-}
-
-.omp-skill-badge--project {
-  background: color-mix(in srgb, var(--omp-success, #4ec9b0) 18%, transparent);
-  color: var(--omp-success, #4ec9b0);
-}
-
-/* MCP type badges reuse skill-badge */
-.omp-skill-badge--stdio {
-  background: color-mix(in srgb, var(--omp-accent) 18%, transparent);
+/* MCP type badges */
+.omp-settings-agent-badge.badge-stdio {
+  background: color-mix(in srgb, var(--omp-accent) 20%, transparent);
   color: var(--omp-accent);
 }
 
-.omp-skill-badge--http {
-  background: color-mix(in srgb, var(--vscode-charts-green, #89d185) 18%, transparent);
+.omp-settings-agent-badge.badge-http {
+  background: color-mix(in srgb, var(--vscode-charts-green, #89d185) 20%, transparent);
   color: var(--vscode-charts-green, #89d185);
 }
 
-.omp-skill-badge--sse {
-  background: color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 18%, transparent);
+.omp-settings-agent-badge.badge-sse {
+  background: color-mix(in srgb, var(--vscode-charts-blue, #4fc1ff) 20%, transparent);
   color: var(--vscode-charts-blue, #4fc1ff);
-}
-
-/* ── MCP Tab ──────────────────────────────────────── */
-.omp-mcp-server-list {
-  margin-top: 8px;
-}
-
-.omp-mcp-server-card {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--omp-border);
-}
-
-.omp-mcp-server-card:last-child {
-  border-bottom: none;
-}
-
-.omp-mcp-server-card:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
-}
-
-.omp-mcp-server-card-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.omp-mcp-server-card-name {
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.omp-mcp-server-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.omp-mcp-server-card-meta {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.omp-mcp-server-source {
-  opacity: 0.8;
-}
-
-.omp-mcp-server-card-command {
-  margin-top: 2px;
-  font-size: 11px;
-  font-family: var(--vscode-editor-font-family, monospace);
-  color: var(--vscode-descriptionForeground);
-  opacity: 0.8;
 }

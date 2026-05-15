@@ -295,6 +295,16 @@ export function ProvidersTab() {
                               )}
                             </div>
                           )}
+                          <div className="omp-settings-agent-row-actions">
+                            <button
+                              type="button"
+                              className="omp-settings-icon-btn"
+                              onClick={() => setEditingProvider(id)}
+                              title="Edit provider configuration"
+                            >
+                              <i className="codicon codicon-edit" />
+                            </button>
+                          </div>
                         </div>
                         <div className="omp-provider-configured-card-status">
                           <span className={`omp-provider-status-dot omp-provider-status-dot--${status}`} />
@@ -315,13 +325,6 @@ export function ProvidersTab() {
                             ))}
                           </ul>
                         )}
-                      </div>
-                      <div className="omp-provider-configured-card-actions">
-                        <button
-                          className="omp-settings-icon-btn codicon codicon-edit"
-                          title="Edit provider configuration"
-                          onClick={() => setEditingProvider(id)}
-                        />
                       </div>
                       <input
                         type="checkbox"

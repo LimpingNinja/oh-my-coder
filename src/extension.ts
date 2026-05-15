@@ -371,6 +371,151 @@ async function deleteAgentDefinition(filePath: string): Promise<void> {
   await fs.unlink(resolveAgentDeletePath(filePath));
 }
 
+
+// ── Skill CRUD ─────────────────────────────────────────────────────────────────
+
+interface EditableSkillPayload {
+  name: string;
+  description: string;
+  globs?: string[];
+  alwaysApply?: boolean;
+  content: string;
+}
+
+function getGlobalSkillsDir(): string {
+  return path.join(os.homedir(), ".omp", "agent", "commands");
+}
+
+function getProjectSkillsDir(): string {
+  const scope = resolveWorkspaceScope(vscode.workspace.workspaceFolders);
+  const workspaceFolder = getEffectiveWorkspaceFolder(scope);
+  if (!workspaceFolder) {
+    throw new Error("No workspace folder is available for project skill creation.");
+  }
+  return path.join(workspaceFolder, ".omp", "commands");
+}
+
+function skillMarkdown(skill: EditableSkillPayload): string {
+  const frontmatter: Record<string, unknown> = {
+    description: skill.description.trim(),
+  };
+  if (skill.globs && skill.globs.length > 0) frontmatter.globs = skill.globs;
+  if (skill.alwaysApply) frontmatter.alwaysApply = true;
+  const yaml = stringifyYaml(frontmatter).trimEnd();
+  return `---\n${yaml}\n---\n${skill.content.trimEnd()}\n`;
+}
+
+async function writeSkillDefinition(
+  scope: "global" | "project",
+  skill: EditableSkillPayload,
+): Promise<string> {
+  if (!skill.name.trim()) throw new Error("Skill name is required.");
+  if (!skill.description.trim()) throw new Error("Skill description is required.");
+  const baseDir = scope === "global" ? getGlobalSkillsDir() : getProjectSkillsDir();
+  const resolvedBase = path.resolve(baseDir);
+  const target = path.join(resolvedBase, `${sanitizeAgentFileName(skill.name)}.md`);
+  const relative = path.relative(resolvedBase, target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Skill files can only be written inside the OMP commands directory.");
+  }
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, skillMarkdown(skill), "utf-8");
+  return target;
+}
+
+function resolveSkillDeletePath(filePath: string): string {
+  const target = path.resolve(filePath);
+  const allowedDirs = [getGlobalSkillsDir()];
+  try {
+    allowedDirs.push(getProjectSkillsDir());
+  } catch {
+    // No project folder; global deletion may still be valid.
+  }
+  for (const dir of allowedDirs) {
+    const base = path.resolve(dir);
+    const relative = path.relative(base, target);
+    if (!relative.startsWith("..") && !path.isAbsolute(relative) && target.endsWith(".md")) {
+      return target;
+    }
+  }
+  throw new Error("Skill files can only be deleted from OMP global/project commands directories.");
+}
+
+async function deleteSkillDefinition(filePath: string): Promise<void> {
+  await fs.unlink(resolveSkillDeletePath(filePath));
+}
+
+// ── MCP CRUD ──────────────────────────────────────────────────────────────────
+
+interface EditableMcpServerPayload {
+  name: string;
+  type: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  url?: string;
+  timeout?: number;
+}
+
+function getMcpConfigPath(scope: "global" | "project"): string {
+  if (scope === "global") {
+    return path.join(os.homedir(), ".omp", "agent", "mcp.json");
+  }
+  const wsScope = resolveWorkspaceScope(vscode.workspace.workspaceFolders);
+  const workspaceFolder = getEffectiveWorkspaceFolder(wsScope);
+  if (!workspaceFolder) {
+    throw new Error("No workspace folder is available for project MCP configuration.");
+  }
+  return path.join(workspaceFolder, ".mcp.json");
+}
+
+async function readMcpConfig(filePath: string): Promise<Record<string, unknown>> {
+  try {
+    const content = await fs.readFile(filePath, "utf-8");
+    return JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    return { mcpServers: {} };
+  }
+}
+
+async function writeMcpServer(
+  scope: "global" | "project",
+  server: EditableMcpServerPayload,
+): Promise<string> {
+  if (!server.name.trim()) throw new Error("Server name is required.");
+  const filePath = getMcpConfigPath(scope);
+  const config = await readMcpConfig(filePath);
+  if (!config.mcpServers || typeof config.mcpServers !== "object") {
+    config.mcpServers = {};
+  }
+  const entry: Record<string, unknown> = { type: server.type };
+  if (server.type === "stdio") {
+    if (!server.command?.trim()) throw new Error("Command is required for stdio servers.");
+    entry.command = server.command.trim();
+    if (server.args && server.args.length > 0) entry.args = server.args;
+  } else {
+    if (!server.url?.trim()) throw new Error("URL is required for http/sse servers.");
+    entry.url = server.url.trim();
+  }
+  if (server.timeout != null && server.timeout > 0) entry.timeout = server.timeout;
+  (config.mcpServers as Record<string, unknown>)[server.name.trim()] = entry;
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  return filePath;
+}
+
+async function deleteMcpServer(
+  scope: "global" | "project",
+  name: string,
+): Promise<string> {
+  if (!name.trim()) throw new Error("Server name is required.");
+  const filePath = getMcpConfigPath(scope);
+  const config = await readMcpConfig(filePath);
+  if (config.mcpServers && typeof config.mcpServers === "object") {
+    delete (config.mcpServers as Record<string, unknown>)[name.trim()];
+  }
+  await fs.writeFile(filePath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  return filePath;
+}
 async function resolveStartupModelDefaults(
   requestedModel?: string,
   requestedThinking?: string,
@@ -1235,6 +1380,130 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
         try {
           await deleteAgentDefinition(message.filePath);
           outputChannel.appendLine(`[omp] deleted agent definition: ${message.filePath}`);
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.skill.write":
+      outputChannel.appendLine("[omp] settings.skill.write");
+      void (async () => {
+        try {
+          const filePath = await writeSkillDefinition(message.scope, message.skill);
+          outputChannel.appendLine(`[omp] wrote skill definition: ${filePath}`);
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.skill.delete":
+      outputChannel.appendLine("[omp] settings.skill.delete");
+      void (async () => {
+        try {
+          await deleteSkillDefinition(message.path);
+          outputChannel.appendLine(`[omp] deleted skill: ${message.path}`);
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.mcp.write":
+      outputChannel.appendLine("[omp] settings.mcp.write");
+      void (async () => {
+        try {
+          const filePath = await writeMcpServer(message.scope, message.server);
+          outputChannel.appendLine(`[omp] wrote MCP server to: ${filePath}`);
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.mcp.delete":
+      outputChannel.appendLine("[omp] settings.mcp.delete");
+      void (async () => {
+        try {
+          const filePath = await deleteMcpServer(message.scope, message.name);
+          outputChannel.appendLine(`[omp] deleted MCP server from: ${filePath}`);
           const config = await getOmpConfig();
           const settingsConfig = await getSettingsPanelConfig(config.raw);
           const agents = await fetchAgentsFromReverseBridge();
