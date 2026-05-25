@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { DeleteConfirmOverlay } from "../DeleteConfirmOverlay";
 import { useSettings } from "../SettingsContext";
 import { SettingsRow } from "../SettingsRow";
 import { getVSCodeAPI } from "../../../vscode";
@@ -21,6 +22,9 @@ interface ProviderStatusEntry {
   hasConfigBaseUrl: boolean;
   configured: boolean;
   modelsAvailable: number;
+  custom?: boolean;
+  baseUrl?: string | null;
+  api?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +106,9 @@ export function ProvidersTab() {
   // Edit view navigation state
   // -------------------------------------------------------------------------
   const [editingProvider, setEditingProvider] = useState<string | null>(null);
+  const [editingCustomProvider, setEditingCustomProvider] = useState<string | null>(null);
+  const [creatingCustomProvider, setCreatingCustomProvider] = useState(false);
+  const [deletingCustomProvider, setDeletingCustomProvider] = useState<string | null>(null);
 
   // -------------------------------------------------------------------------
   // Fallback: Available models from runtime (used when bridge unavailable)
@@ -145,9 +152,12 @@ export function ProvidersTab() {
     }
   }
 
-  // Build the list of provider IDs to show
-  const allProviderIds = hasBridgeStatus
-    ? Array.from(new Set([...providerStatus!.map((p) => p.id), ...disabledProviders])).sort()
+  // Build the list of provider IDs to show (excluding custom)
+  const customProviders = hasBridgeStatus
+    ? providerStatus!.filter((p) => p.custom)
+    : [];
+  const builtinProviderIds = hasBridgeStatus
+    ? Array.from(new Set([...providerStatus!.filter((p) => !p.custom).map((p) => p.id), ...disabledProviders])).sort()
     : Array.from(new Set([...providerModelCounts.keys(), ...disabledProviders])).sort();
 
   // Quick lookup for bridge status entries
@@ -188,7 +198,7 @@ export function ProvidersTab() {
   const unconfiguredProviders: string[] = [];
 
   if (hasBridgeStatus) {
-    for (const id of allProviderIds) {
+    for (const id of builtinProviderIds) {
       const entry = statusById.get(id);
       if (entry && entry.configured) {
         configuredProviders.push(id);
@@ -201,6 +211,16 @@ export function ProvidersTab() {
   // -------------------------------------------------------------------------
   // Edit view
   // -------------------------------------------------------------------------
+
+  if (creatingCustomProvider || editingCustomProvider) {
+    const existingEntry = editingCustomProvider ? statusById.get(editingCustomProvider) : null;
+    return (
+      <CustomProviderEditView
+        entry={existingEntry ?? null}
+        onBack={() => { setCreatingCustomProvider(false); setEditingCustomProvider(null); }}
+      />
+    );
+  }
 
   if (editingProvider) {
     const entry = statusById.get(editingProvider);
@@ -221,6 +241,95 @@ export function ProvidersTab() {
 
   return (
     <div>
+      {/* § Custom Providers */}
+      {hasBridgeStatus && (
+        <div className="omp-settings-section">
+          <h3 className="omp-settings-section-title">Custom Providers</h3>
+          <p className="omp-settings-section-desc">
+            OpenAI-compatible endpoints configured in models.yml
+          </p>
+          {customProviders.length > 0 && (
+            <div className="omp-provider-configured-list">
+              {customProviders.map((entry) => {
+                const isDisabled = disabledProviders.includes(entry.id);
+                return (
+                  <div key={entry.id} className="omp-provider-configured-card">
+                    <span className="omp-provider-icon" dangerouslySetInnerHTML={{ __html: renderProviderIcon(entry.id) }} />
+                    <div className="omp-provider-configured-card-main">
+                      <div className="omp-provider-configured-card-top">
+                        <span className="omp-provider-configured-card-name">
+                          {entry.name || fallbackName(entry.id)}
+                        </span>
+                        {entry.modelsAvailable > 0 && (
+                          <span className="omp-provider-configured-card-meta">
+                            {entry.modelsAvailable} model{entry.modelsAvailable > 1 ? "s" : ""}
+                          </span>
+                        )}
+                        {entry.baseUrl && (
+                          <span className="omp-provider-config-badge">{entry.baseUrl}</span>
+                        )}
+                        <div className="omp-settings-agent-row-actions">
+                          <button
+                            type="button"
+                            className="omp-settings-icon-btn"
+                            onClick={() => setEditingCustomProvider(entry.id)}
+                            title="Edit custom provider"
+                          >
+                            <i className="codicon codicon-edit" />
+                          </button>
+                          <button
+                            type="button"
+                            className="omp-settings-icon-btn"
+                            onClick={() => setDeletingCustomProvider(entry.id)}
+                            title="Delete custom provider"
+                          >
+                            <i className="codicon codicon-trash" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="omp-provider-configured-card-status">
+                        <span className="omp-provider-status-dot omp-provider-status-dot--configured" />
+                        <span className="omp-provider-status-label">Configured</span>
+                        <span className="omp-provider-auth-badge">
+                          {entry.api || "openai-completions"}
+                        </span>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="omp-settings-toggle"
+                      checked={!isDisabled}
+                      onChange={(e) => toggleProvider(entry.id, e.target.checked)}
+                      title={isDisabled ? "Enable provider" : "Disable provider"}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <button
+            className="omp-settings-btn-small"
+            style={{ marginTop: 8 }}
+            onClick={() => setCreatingCustomProvider(true)}
+          >
+            + Add Custom Provider
+          </button>
+        </div>
+      )}
+
+      {/* § Delete confirmation overlay */}
+      {deletingCustomProvider && (
+        <DeleteConfirmOverlay
+          type="provider"
+          name={deletingCustomProvider}
+          onCancel={() => setDeletingCustomProvider(null)}
+          onConfirm={() => {
+            getVSCodeAPI().postMessage({ type: "settings.provider.delete", providerId: deletingCustomProvider });
+            setDeletingCustomProvider(null);
+          }}
+        />
+      )}
+
       {/* § Available Providers */}
       <div className="omp-settings-section">
         <h3 className="omp-settings-section-title">Available Providers</h3>
@@ -230,14 +339,14 @@ export function ProvidersTab() {
             : "Providers discovered from available models. Toggle to enable or disable."}
         </p>
 
-        {allProviderIds.length === 0 ? (
+        {builtinProviderIds.length === 0 ? (
           <p className="omp-settings-section-desc" style={{ marginTop: 8 }}>
             No providers detected. Models will appear once the runtime reports available models.
           </p>
         ) : !hasBridgeStatus ? (
           /* Fallback: model-count-only view (no bridge status) */
           <div className="omp-provider-configured-list">
-            {allProviderIds.map((id) => {
+            {builtinProviderIds.map((id) => {
               const isDisabled = disabledProviders.includes(id);
               const count = providerModelCounts.get(id) ?? 0;
               return (
@@ -747,6 +856,123 @@ function ProviderEditView({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CustomProviderEditView
+// ---------------------------------------------------------------------------
+
+const API_FORMAT_OPTIONS = [
+  { value: "openai-completions", label: "OpenAI Completions" },
+  { value: "anthropic", label: "Anthropic" },
+  { value: "google", label: "Google AI" },
+];
+
+function CustomProviderEditView({
+  entry,
+  onBack,
+}: {
+  entry: ProviderStatusEntry | null;
+  onBack: () => void;
+}) {
+  const isNew = !entry;
+  const [id, setId] = useState(entry?.id ?? "");
+  const [baseUrl, setBaseUrl] = useState(entry?.baseUrl ?? "");
+  const [apiKey, setApiKey] = useState("");
+  const [api, setApi] = useState(entry?.api ?? "openai-completions");
+  const [showKey, setShowKey] = useState(false);
+
+  const canSave = id.trim().length > 0 && baseUrl.trim().length > 0;
+
+  const handleSave = () => {
+    if (!canSave) return;
+    getVSCodeAPI().postMessage({
+      type: "settings.provider.write",
+      provider: {
+        id: id.trim(),
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim() || undefined,
+        api: api || undefined,
+      },
+    });
+    onBack();
+  };
+
+  return (
+    <div className="omp-settings-agent-edit">
+      <button onClick={onBack} className="omp-settings-back-btn">
+        <i className="codicon codicon-arrow-left" /> Back to list
+      </button>
+      <div className="omp-settings-agent-edit-heading">
+        <h3 className="omp-settings-agent-edit-title">
+          {isNew ? "New Custom Provider" : entry.name || entry.id}
+        </h3>
+        <span className="omp-provider-auth-badge">Custom</span>
+      </div>
+
+      <div className="omp-settings-section">
+        <SettingsRow title="Provider ID" description="Unique identifier used in model references (e.g. MyProvider/model-name)">
+          <input
+            className="omp-settings-input"
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            readOnly={!isNew}
+            placeholder="my-provider"
+          />
+        </SettingsRow>
+        <SettingsRow title="Base URL" description="OpenAI-compatible API endpoint">
+          <input
+            type="text"
+            className="omp-settings-input"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder="http://localhost:8000/v1"
+          />
+        </SettingsRow>
+        <SettingsRow title="API Key" description="Authentication key (leave empty if not required)">
+          <div style={{ display: "flex", gap: 4, alignItems: "center", width: "100%" }}>
+            <input
+              type={showKey ? "text" : "password"}
+              className="omp-settings-input"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={entry?.hasConfigKey ? "••••••••  (already set)" : "Enter API key"}
+              style={{ flex: 1 }}
+            />
+            <button
+              className="omp-provider-password-toggle"
+              onClick={() => setShowKey(!showKey)}
+              title={showKey ? "Hide API key" : "Show API key"}
+              type="button"
+            >
+              <i className={`codicon codicon-${showKey ? "eye-closed" : "eye"}`} />
+            </button>
+          </div>
+        </SettingsRow>
+        <SettingsRow title="API Format" description="Protocol format for this endpoint" last>
+          <select
+            className="omp-settings-select"
+            value={api}
+            onChange={(e) => setApi(e.target.value)}
+          >
+            {API_FORMAT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </SettingsRow>
+      </div>
+
+      <div className="omp-settings-agent-actions">
+        <button
+          className="omp-settings-btn-small"
+          onClick={handleSave}
+          disabled={!canSave}
+        >
+          {isNew ? "Add Provider" : "Save Provider"}
+        </button>
+      </div>
     </div>
   );
 }

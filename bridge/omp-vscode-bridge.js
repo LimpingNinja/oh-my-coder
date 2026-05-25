@@ -431,7 +431,9 @@ export default function (pi) {
     const modelsYml = readModelsYml();
     const availableModels = latestContext?.modelRegistry?.getAvailable?.() ?? [];
 
-    return PROVIDER_META.map((meta) => {
+    const knownIds = new Set(PROVIDER_META.map((m) => m.id));
+
+    const results = PROVIDER_META.map((meta) => {
       const envVarsSet = {};
       let anyEnvSet = false;
       for (const v of meta.envVars) {
@@ -466,6 +468,32 @@ export default function (pi) {
         modelsAvailable,
       };
     });
+
+    // Append custom providers from models.yml that aren't in PROVIDER_META
+    if (modelsYml && typeof modelsYml === "object") {
+      for (const [id, conf] of Object.entries(modelsYml)) {
+        if (knownIds.has(id)) continue;
+        const providerConf = conf;
+        const modelCount = Array.isArray(providerConf?.models) ? providerConf.models.length : 0;
+        results.push({
+          id,
+          name: id,
+          authMethod: providerConf?.apiKey ? "apiKey" : "none",
+          badgeLabel: providerConf?.apiKey ? "API Key" : "Custom",
+          envVars: [],
+          envVarsSet: {},
+          hasConfigKey: !!providerConf?.apiKey,
+          hasConfigBaseUrl: !!providerConf?.baseUrl,
+          configured: true,
+          modelsAvailable: modelCount,
+          custom: true,
+          baseUrl: providerConf?.baseUrl || null,
+          api: providerConf?.api || null,
+        });
+      }
+    }
+
+    return results;
   }
 
   // ─── Reverse Bridge Server ────────────────────────────────────────────────────
@@ -613,7 +641,7 @@ export default function (pi) {
                       return {
                         name,
                         type: cfg.type || (cfg.command ? "stdio" : cfg.url ? "http" : "stdio"),
-                        status: mgr?.getConnectionStatus?.(name) ?? "disconnected",
+                        status: mgr?.getConnectionStatus?.(name) ?? (toolCount > 0 ? "connected" : "disconnected"),
                         enabled: cfg.enabled !== false,
                         source: src?.level || "user",
                         sourcePath: src?.path || "",

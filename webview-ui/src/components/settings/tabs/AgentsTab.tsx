@@ -1,11 +1,12 @@
 import { useState } from "react";
+import { SteeringSubTab } from "./SteeringSubTab";
 import { getVSCodeAPI } from "../../../vscode";
 import { ModelReferencePicker, THINKING_LEVEL_OPTIONS } from "../ModelReferencePicker";
 import { useSettings } from "../SettingsContext";
 import { SettingsRow } from "../SettingsRow";
 import { DeleteConfirmOverlay } from "../DeleteConfirmOverlay";
 
-const SUB_TABS = ["Agents", "Delegation"] as const;
+const SUB_TABS = ["Agents", "Delegation", "Steering"] as const;
 type SubTab = (typeof SUB_TABS)[number];
 
 let lastSubTab: SubTab = "Agents";
@@ -54,6 +55,7 @@ export function AgentsTab() {
       <div className="omp-settings-subtab-content">
         {subTab === "Agents" && <AgentsSubTab />}
         {subTab === "Delegation" && <DelegationSubTab />}
+        {subTab === "Steering" && <SteeringSubTab />}
       </div>
     </div>
   );

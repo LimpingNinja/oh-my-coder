@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as vscode from "vscode";
-import { stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { findOmpBinary, createOmpEnvironment } from "./omp.ts";
 import { OmpChatProvider } from "./webview/provider.ts";
 import type {
@@ -369,6 +369,162 @@ function resolveAgentDeletePath(filePath: string): string {
 
 async function deleteAgentDefinition(filePath: string): Promise<void> {
   await fs.unlink(resolveAgentDeletePath(filePath));
+}
+
+
+// ── Custom Provider CRUD ────────────────────────────────────────────────────────
+
+function getModelsYmlPath(): string {
+  const configDirName = process.env.PI_CONFIG_DIR || ".omp";
+  const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), configDirName, "agent");
+  return path.join(agentDir, "models.yml");
+}
+
+async function readModelsYml(): Promise<Record<string, unknown>> {
+  const ymlPath = getModelsYmlPath();
+  try {
+    const raw = await fs.readFile(ymlPath, "utf-8");
+    const parsed = parseYaml(raw);
+    return (parsed && typeof parsed === "object") ? parsed as Record<string, unknown> : { providers: {} };
+  } catch {
+    return { providers: {} };
+  }
+}
+
+async function writeModelsYml(doc: Record<string, unknown>): Promise<void> {
+  const ymlPath = getModelsYmlPath();
+  await fs.mkdir(path.dirname(ymlPath), { recursive: true });
+  const tmpPath = ymlPath + ".tmp";
+  await fs.writeFile(tmpPath, stringifyYaml(doc), "utf-8");
+  await fs.rename(tmpPath, ymlPath);
+}
+
+async function writeCustomProvider(provider: { id: string; baseUrl: string; apiKey?: string; api?: string }): Promise<void> {
+  if (!provider.id.trim()) throw new Error("Provider ID is required.");
+  if (!provider.baseUrl.trim()) throw new Error("Base URL is required.");
+  const doc = await readModelsYml();
+  const providers = (doc.providers && typeof doc.providers === "object")
+    ? doc.providers as Record<string, unknown>
+    : {};
+  const existing = (providers[provider.id] && typeof providers[provider.id] === "object")
+    ? providers[provider.id] as Record<string, unknown>
+    : {};
+  existing.baseUrl = provider.baseUrl.trim();
+  if (provider.apiKey?.trim()) {
+    existing.apiKey = provider.apiKey.trim();
+  } else {
+    delete existing.apiKey;
+  }
+  if (provider.api?.trim()) {
+    existing.api = provider.api.trim();
+  } else {
+    delete existing.api;
+  }
+  providers[provider.id] = existing;
+  doc.providers = providers;
+  await writeModelsYml(doc);
+}
+
+async function deleteCustomProvider(providerId: string): Promise<void> {
+  if (!providerId.trim()) throw new Error("Provider ID is required.");
+  const doc = await readModelsYml();
+  const providers = (doc.providers && typeof doc.providers === "object")
+    ? doc.providers as Record<string, unknown>
+    : {};
+  if (!(providerId in providers)) throw new Error(`Provider "${providerId}" not found in models.yml.`);
+  delete providers[providerId];
+  doc.providers = providers;
+  await writeModelsYml(doc);
+}
+
+
+// ── Rule CRUD ────────────────────────────────────────────────────────────────────
+
+function getGlobalRulesDir(): string {
+  return path.join(os.homedir(), ".omp", "agent", "rules");
+}
+
+function getProjectRulesDir(): string {
+  const scope = resolveWorkspaceScope(vscode.workspace.workspaceFolders);
+  const workspaceFolder = getEffectiveWorkspaceFolder(scope);
+  if (!workspaceFolder) {
+    throw new Error("No workspace folder is available for project rule creation.");
+  }
+  return path.join(workspaceFolder, ".omp", "rules");
+}
+
+interface EditableRulePayload {
+  name: string;
+  description?: string;
+  globs?: string[];
+  alwaysApply?: boolean;
+  condition?: string[];
+  scope?: string[];
+  interruptMode?: "never" | "prose-only" | "tool-only" | "always";
+  content: string;
+}
+
+function ruleMarkdown(rule: EditableRulePayload): string {
+  const frontmatter: Record<string, unknown> = {};
+  if (rule.description?.trim()) frontmatter.description = rule.description.trim();
+  if (rule.globs && rule.globs.length > 0) frontmatter.globs = rule.globs;
+  if (rule.alwaysApply) frontmatter.alwaysApply = true;
+  if (rule.condition && rule.condition.length > 0) frontmatter.condition = rule.condition;
+  if (rule.scope && rule.scope.length > 0) frontmatter.scope = rule.scope;
+  if (rule.interruptMode) frontmatter.interruptMode = rule.interruptMode;
+  const hasFrontmatter = Object.keys(frontmatter).length > 0;
+  if (!hasFrontmatter) return rule.content.trimEnd() + "\n";
+  const yaml = stringifyYaml(frontmatter).trimEnd();
+  return `---\n${yaml}\n---\n${rule.content.trimEnd()}\n`;
+}
+
+async function writeRuleDefinition(
+  scope: "global" | "project",
+  rule: EditableRulePayload,
+): Promise<string> {
+  if (!rule.name.trim()) throw new Error("Rule name is required.");
+  const dir = scope === "global" ? getGlobalRulesDir() : getProjectRulesDir();
+  const safeName = rule.name.trim().replace(/[^a-zA-Z0-9_-]/g, "-");
+  const target = path.join(dir, `${safeName}.md`);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(target, ruleMarkdown(rule), "utf-8");
+  return target;
+}
+
+async function deleteRuleDefinition(scope: "global" | "project", name: string): Promise<void> {
+  const dir = scope === "global" ? getGlobalRulesDir() : getProjectRulesDir();
+  const safeName = name.trim().replace(/[^a-zA-Z0-9_-]/g, "-");
+  const target = path.join(dir, `${safeName}.md`);
+  await fs.unlink(target);
+}
+
+// ── AGENTS.md CRUD ───────────────────────────────────────────────────────────────
+
+function getGlobalAgentsMdPath(): string {
+  return path.join(os.homedir(), ".omp", "agent", "AGENTS.md");
+}
+
+function getProjectAgentsMdPath(): string {
+  const scope = resolveWorkspaceScope(vscode.workspace.workspaceFolders);
+  const workspaceFolder = getEffectiveWorkspaceFolder(scope);
+  if (!workspaceFolder) {
+    throw new Error("No workspace folder is available for project AGENTS.md.");
+  }
+  return path.join(workspaceFolder, ".omp", "AGENTS.md");
+}
+
+async function readAgentsMd(): Promise<{ global: string; project: string }> {
+  let globalContent = "";
+  let projectContent = "";
+  try { globalContent = await fs.readFile(getGlobalAgentsMdPath(), "utf-8"); } catch {}
+  try { projectContent = await fs.readFile(getProjectAgentsMdPath(), "utf-8"); } catch {}
+  return { global: globalContent, project: projectContent };
+}
+
+async function writeAgentsMd(scope: "global" | "project", content: string): Promise<void> {
+  const filePath = scope === "global" ? getGlobalAgentsMdPath() : getProjectAgentsMdPath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, content, "utf-8");
 }
 
 
@@ -1559,6 +1715,163 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           outputChannel.appendLine(`[omp] MCP reload error: ${msg}`);
+        }
+      })();
+      break;
+
+    case "settings.provider.write":
+      outputChannel.appendLine("[omp] settings.provider.write");
+      void (async () => {
+        try {
+          await writeCustomProvider(message.provider);
+          outputChannel.appendLine(`[omp] wrote custom provider: ${message.provider.id}`);
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.provider.delete":
+      outputChannel.appendLine("[omp] settings.provider.delete");
+      void (async () => {
+        try {
+          await deleteCustomProvider(message.providerId);
+          outputChannel.appendLine(`[omp] deleted custom provider: ${message.providerId}`);
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.rule.write":
+      outputChannel.appendLine("[omp] settings.rule.write");
+      void (async () => {
+        try {
+          const filePath = await writeRuleDefinition(message.scope, message.rule);
+          outputChannel.appendLine(`[omp] wrote rule definition: ${filePath}`);
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.rule.delete":
+      outputChannel.appendLine("[omp] settings.rule.delete");
+      void (async () => {
+        try {
+          await deleteRuleDefinition(message.scope, message.name);
+          outputChannel.appendLine(`[omp] deleted rule: ${message.name}`);
+          const config = await getOmpConfig();
+          const settingsConfig = await getSettingsPanelConfig(config.raw);
+          const agents = await fetchAgentsFromReverseBridge();
+          const providerStatus = await fetchProviderStatusFromReverseBridge();
+          const skills = await fetchSkillsFromReverseBridge();
+          const mcpServers = await fetchMcpServersFromReverseBridge();
+          const payload = {
+            type: "settings.loaded" as const,
+            config: settingsConfig,
+            agents,
+            bridgeAvailable: !!bridgeContext?.reverseBridgePort,
+            providerStatus,
+            skills,
+            mcpServers,
+          };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.agentsMd.load":
+      outputChannel.appendLine("[omp] settings.agentsMd.load");
+      void (async () => {
+        try {
+          const result = await readAgentsMd();
+          const payload = { type: "settings.agentsMd.loaded" as const, ...result };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          outputChannel.appendLine(`[omp] agentsMd.load error: ${msg}`);
+        }
+      })();
+      break;
+
+    case "settings.agentsMd.save":
+      outputChannel.appendLine("[omp] settings.agentsMd.save");
+      void (async () => {
+        try {
+          await writeAgentsMd(message.scope, message.content);
+          outputChannel.appendLine(`[omp] saved AGENTS.md (${message.scope})`);
+          const result = await readAgentsMd();
+          const payload = { type: "settings.agentsMd.loaded" as const, ...result };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          postToWebview({ type: "settings.updateFailed", message: msg });
+          SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
         }
       })();
       break;

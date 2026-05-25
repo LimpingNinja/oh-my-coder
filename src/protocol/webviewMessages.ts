@@ -33,12 +33,16 @@ export interface ProviderStatusEntry {
   id: string;
   name: string;
   authMethod: "apiKey" | "oauth" | "none";
+  badgeLabel?: string;
   envVars: string[];
   envVarsSet: Record<string, boolean>;
   hasConfigKey: boolean;
   hasConfigBaseUrl: boolean;
   configured: boolean;
   modelsAvailable: number;
+  custom?: boolean;
+  baseUrl?: string | null;
+  api?: string | null;
 }
 
 
@@ -253,7 +257,34 @@ export type WebviewToExtensionMessage =
       };
     }
   | { type: "settings.mcp.delete"; scope: "global" | "project"; name: string }
-  | { type: "settings.mcp.reload" };
+  | { type: "settings.mcp.reload" }
+  | {
+      type: "settings.provider.write";
+      provider: {
+        id: string;
+        baseUrl: string;
+        apiKey?: string;
+        api?: string;
+      };
+    }
+  | { type: "settings.provider.delete"; providerId: string }
+  | {
+      type: "settings.rule.write";
+      scope: "global" | "project";
+      rule: {
+        name: string;
+        description?: string;
+        globs?: string[];
+        alwaysApply?: boolean;
+        condition?: string[];
+        scope?: string[];
+        interruptMode?: "never" | "prose-only" | "tool-only" | "always";
+        content: string;
+      };
+    }
+  | { type: "settings.rule.delete"; scope: "global" | "project"; name: string }
+  | { type: "settings.agentsMd.load" }
+  | { type: "settings.agentsMd.save"; scope: "global" | "project"; content: string };
 
 // ============================================================================
 // Extension → Webview messages
@@ -408,6 +439,7 @@ export type ExtensionToWebviewMessage =
   | { type: "settings.updated"; config: Record<string, unknown>; providerStatus?: ProviderStatusEntry[]; skills?: Array<{ name: string; description: string; source: string; location: string; path: string }>; mcpServers?: Array<{ name: string; type: string; status: string; enabled: boolean; source: string; sourcePath: string; config: Record<string, unknown> }> }
   | { type: "settings.omc.loaded"; settings: { path: string } }
   | { type: "settings.omc.updated" }
+  | { type: "settings.agentsMd.loaded"; global: string; project: string }
   /** Config save failed. */
   | { type: "settings.updateFailed"; message: string; details?: string }
   /** Navigate webview to settings panel with optional tab. */
@@ -582,6 +614,12 @@ const webviewToExtensionTypes = new Set<string>([
   "settings.mcp.write",
   "settings.mcp.delete",
   "settings.mcp.reload",
+  "settings.provider.write",
+  "settings.provider.delete",
+  "settings.rule.write",
+  "settings.rule.delete",
+  "settings.agentsMd.load",
+  "settings.agentsMd.save",
 ]);
 
 const extensionToWebviewTypes = new Set<string>([
@@ -618,4 +656,5 @@ const extensionToWebviewTypes = new Set<string>([
   "display.settings",
   "settings.omc.loaded",
   "settings.omc.updated",
+  "settings.agentsMd.loaded",
 ]);

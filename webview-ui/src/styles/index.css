@@ -5854,3 +5854,109 @@ body {
   font-style: italic;
   white-space: nowrap;
 }
+
+/* ── TagInput ─────────────────────────────────────────────────────────────── */
+
+.omp-tag-input-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: var(--vscode-input-background);
+  min-height: 32px;
+  align-items: center;
+  cursor: text;
+}
+
+.omp-tag-input-container:focus-within {
+  border-color: var(--vscode-focusBorder);
+}
+
+.omp-tag-input-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.omp-tag-input-chip-text {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+}
+
+.omp-tag-input-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: none;
+  background: none;
+  color: var(--vscode-foreground);
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.omp-tag-input-chip-remove:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--vscode-foreground) 15%, transparent);
+}
+
+.omp-tag-input-field {
+  flex: 1;
+  min-width: 80px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-input-foreground);
+  font-size: 13px;
+  outline: none;
+  padding: 2px 0;
+}
+
+.omp-tag-input-field::placeholder {
+  color: var(--vscode-input-placeholderForeground);
+}
+
+/* ── ScopeBuilder ─────────────────────────────────────────────────────────── */
+
+.omp-scope-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.omp-scope-builder-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.omp-scope-builder-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-input-background) 50%, transparent);
+}
+
+.omp-scope-builder-form .omp-settings-select {
+  min-width: 100px;
+}
+
+.omp-scope-builder-form .omp-settings-input {
+  min-width: 120px;
+}
