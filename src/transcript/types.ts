@@ -65,6 +65,8 @@ export interface TranscriptToolCall {
   intent?: string;
   /** Current execution status. */
   status: "running" | "completed" | "error";
+  /** True when tool_execution_end arrived with async.state === "running" — tool is still running in the background. */
+  background?: boolean;
   /** Partial result during execution. */
   partialResult?: unknown;
   /** Final result after completion. */

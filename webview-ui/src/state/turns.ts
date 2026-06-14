@@ -97,6 +97,8 @@ export interface ToolCallEvent {
   intent?: string;
   result?: unknown;
   isError?: boolean;
+  /** True when tool_execution_end arrived with async.state === "running" — still running in background. */
+  background?: boolean;
   /** Live progress for task/agent tool calls */
   progress?: TaskProgress[];
 }

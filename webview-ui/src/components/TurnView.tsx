@@ -377,11 +377,13 @@ function TaskBlock({ event }: { event: ToolCallEvent }) {
   const agentCount = event.progress?.length || (Array.isArray((args as any)?.tasks) ? (args as any).tasks.length : undefined);
 
   // Header text: "agent launched" while running, "completed" when done
-  const headerText = event.status === "running"
-    ? `${agentType} agent launched`
-    : event.status === "error"
-      ? `${agentType} agent failed`
-      : `${agentType} completed`;
+  const headerText = event.background
+    ? `${agentType} running in background`
+    : event.status === "running"
+      ? `${agentType} agent launched`
+      : event.status === "error"
+        ? `${agentType} agent failed`
+        : `${agentType} completed`;
 
   const statusIcon =
     event.status === "running" ? "sync~spin"

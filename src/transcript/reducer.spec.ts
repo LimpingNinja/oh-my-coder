@@ -285,6 +285,123 @@ describe("transcript reducer", () => {
       expect(result.state.messages[0]!.toolCalls[0]!.status).toBe("error");
       expect(result.state.messages[0]!.toolCalls[0]!.isError).toBe(true);
     });
+
+    it("keeps tool running on tool_execution_end with async.state = running", () => {
+      let state = emptyState();
+      state = applyFrame(state, {
+        type: "message_start",
+        message: { id: "msg_1", role: "assistant" },
+      } as unknown as OmpRpcFrame).state;
+      state = applyFrame(state, {
+        type: "tool_execution_start",
+        toolCallId: "tc_async1",
+        toolName: "task",
+        args: { agent: "explore" },
+      } as unknown as OmpRpcFrame).state;
+
+      const result = applyFrame(state, {
+        type: "tool_execution_end",
+        toolCallId: "tc_async1",
+        toolName: "task",
+        result: { content: "Spawned agent", details: { async: { state: "running", jobId: "j1" } } },
+        isError: false,
+      } as unknown as OmpRpcFrame);
+
+      const tc = result.state.messages[0]!.toolCalls[0]!;
+      expect(tc.status).toBe("running");
+      expect(tc.background).toBe(true);
+      expect(tc.partialResult).toEqual({
+        content: "Spawned agent",
+        details: { async: { state: "running", jobId: "j1" } },
+      });
+      expect(tc.result).toBeUndefined();
+      // Effect should be tool_updated (not tool_ended) since tool is still running
+      expect(result.effect.kind).toBe("tool_updated");
+    });
+
+    it("marks tool completed on tool_execution_end without async state", () => {
+      let state = emptyState();
+      state = applyFrame(state, {
+        type: "message_start",
+        message: { id: "msg_1", role: "assistant" },
+      } as unknown as OmpRpcFrame).state;
+      state = applyFrame(state, {
+        type: "tool_execution_start",
+        toolCallId: "tc_1",
+        toolName: "read_file",
+        args: {},
+      } as unknown as OmpRpcFrame).state;
+
+      const result = applyFrame(state, {
+        type: "tool_execution_end",
+        toolCallId: "tc_1",
+        toolName: "read_file",
+        result: "file contents",
+        isError: false,
+      } as unknown as OmpRpcFrame);
+
+      expect(result.state.messages[0]!.toolCalls[0]!.status).toBe("completed");
+      expect(result.state.messages[0]!.toolCalls[0]!.background).toBeUndefined();
+      expect(result.state.messages[0]!.toolCalls[0]!.result).toBe("file contents");
+      expect(result.effect.kind).toBe("tool_ended");
+    });
+
+    it("marks tool completed on tool_execution_end with async.state = completed", () => {
+      let state = emptyState();
+      state = applyFrame(state, {
+        type: "message_start",
+        message: { id: "msg_1", role: "assistant" },
+      } as unknown as OmpRpcFrame).state;
+      state = applyFrame(state, {
+        type: "tool_execution_start",
+        toolCallId: "tc_2",
+        toolName: "task",
+        args: { agent: "explore" },
+      } as unknown as OmpRpcFrame).state;
+
+      const result = applyFrame(state, {
+        type: "tool_execution_end",
+        toolCallId: "tc_2",
+        toolName: "task",
+        result: { content: "Done", details: { async: { state: "completed" } } },
+        isError: false,
+      } as unknown as OmpRpcFrame);
+
+      expect(result.state.messages[0]!.toolCalls[0]!.status).toBe("completed");
+      expect(result.state.messages[0]!.toolCalls[0]!.background).toBeUndefined();
+      expect(result.state.messages[0]!.toolCalls[0]!.result).toEqual({
+        content: "Done",
+        details: { async: { state: "completed" } },
+      });
+    });
+
+    it("marks tool as error on tool_execution_end with async.state = running but isError = true", () => {
+      let state = emptyState();
+      state = applyFrame(state, {
+        type: "message_start",
+        message: { id: "msg_1", role: "assistant" },
+      } as unknown as OmpRpcFrame).state;
+      state = applyFrame(state, {
+        type: "tool_execution_start",
+        toolCallId: "tc_err",
+        toolName: "bash",
+        args: {},
+      } as unknown as OmpRpcFrame).state;
+
+      // isError should take precedence — even if async says running, an error is final
+      const result = applyFrame(state, {
+        type: "tool_execution_end",
+        toolCallId: "tc_err",
+        toolName: "bash",
+        result: { content: "failed", details: { async: { state: "running" } } },
+        isError: true,
+      } as unknown as OmpRpcFrame);
+
+      // isError=true still overrides to error status
+      const tc = result.state.messages[0]!.toolCalls[0]!;
+      expect(tc.status).toBe("error");
+      expect(tc.isError).toBe(true);
+    });
   });
 
   describe("compaction events", () => {

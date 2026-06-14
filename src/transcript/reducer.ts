@@ -228,8 +228,12 @@ function handleMessageEnd(state: TranscriptState, frame: Record<string, unknown>
     streaming: false,
     finalized: true,
     finalizedAt: Date.now(),
-    stopReason: typeof messagePayload?.stopReason === "string" ? messagePayload.stopReason : msg.stopReason,
-    errorMessage: typeof messagePayload?.errorMessage === "string" ? messagePayload.errorMessage : msg.errorMessage,
+    stopReason:
+      typeof messagePayload?.stopReason === "string" ? messagePayload.stopReason : msg.stopReason,
+    errorMessage:
+      typeof messagePayload?.errorMessage === "string"
+        ? messagePayload.errorMessage
+        : msg.errorMessage,
     raw: messagePayload ?? msg.raw,
   }));
 
@@ -328,6 +332,11 @@ function handleToolEnd(state: TranscriptState, frame: Record<string, unknown>): 
     return { state, effect: { kind: "none" } };
   }
 
+  // If the tool is still running in the background (and not in error state),
+  // keep status as "running" and mark it with background=true so downstream
+  // knows this is not yet final.
+  const asyncRunning = !isError && isAsyncRunning(result);
+
   let endedToolCall: TranscriptToolCall | undefined;
 
   const newState = updateActiveMessage(state, (msg) => ({
@@ -336,9 +345,13 @@ function handleToolEnd(state: TranscriptState, frame: Record<string, unknown>): 
       if (tc.toolCallId === toolCallId) {
         endedToolCall = {
           ...tc,
-          status: isError ? "error" : "completed",
-          result,
-          isError,
+          ...(asyncRunning
+            ? { status: "running" as const, background: true, partialResult: result }
+            : {
+                status: (isError ? "error" : "completed") as TranscriptToolCall["status"],
+                result,
+                isError,
+              }),
         };
         return endedToolCall;
       }
@@ -349,7 +362,11 @@ function handleToolEnd(state: TranscriptState, frame: Record<string, unknown>): 
   return endedToolCall
     ? {
         state: newState,
-        effect: { kind: "tool_ended", messageId: state.activeMessageId, toolCall: endedToolCall },
+        effect: {
+          kind: asyncRunning ? "tool_updated" : "tool_ended",
+          messageId: state.activeMessageId,
+          toolCall: endedToolCall,
+        },
       }
     : { state, effect: { kind: "none" } };
 }
@@ -403,4 +420,21 @@ function updateActiveMessage(
     ...state,
     messages: state.messages.map((msg) => (msg.id === state.activeMessageId ? updater(msg) : msg)),
   };
+}
+
+/**
+ * Returns true when a tool_execution_end result indicates the tool is still
+ * running in the background (details.async.state === "running").
+ */
+export function isAsyncRunning(result: unknown): boolean {
+  if (result && typeof result === "object") {
+    const details = (result as Record<string, unknown>).details;
+    if (details && typeof details === "object") {
+      const async_ = (details as Record<string, unknown>).async;
+      if (async_ && typeof async_ === "object") {
+        return (async_ as Record<string, unknown>).state === "running";
+      }
+    }
+  }
+  return false;
 }

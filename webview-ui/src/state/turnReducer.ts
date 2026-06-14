@@ -17,6 +17,24 @@ import type {
 import { createEmptyTurnTranscript, generateTurnId } from "./turns";
 import { seedComposerHistory } from "../components/Composer";
 
+
+/**
+ * Returns true when a tool_execution_end result indicates the tool is still
+ * running in the background (details.async.state === "running").
+ */
+function isAsyncRunning(result: unknown): boolean {
+  if (result && typeof result === "object") {
+    const details = (result as Record<string, unknown>).details;
+    if (details && typeof details === "object") {
+      const async_ = (details as Record<string, unknown>).async;
+      if (async_ && typeof async_ === "object") {
+        return (async_ as Record<string, unknown>).state === "running";
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * Process a raw extension→webview message and update the transcript state.
  * Returns the new state.
@@ -402,10 +420,16 @@ function handleRuntimeFrame(
 
     case "tool_execution_end": {
       const toolCallId = frame.toolCallId as string;
+      const result = frame.result;
+      const isError = frame.isError as boolean | undefined;
+
+      // If the tool is still running in background (and not in error state), keep status as "running"
+      const asyncRunning = !isError && isAsyncRunning(result);
+
       return updateToolCall(state, toolCallId, {
-        status: (frame.isError as boolean) ? "error" : "completed",
-        result: frame.result,
-        isError: frame.isError as boolean,
+        ...(asyncRunning
+          ? { status: "running" as const, background: true, result }
+          : { status: isError ? "error" : "completed", result, isError }),
       });
     }
 
