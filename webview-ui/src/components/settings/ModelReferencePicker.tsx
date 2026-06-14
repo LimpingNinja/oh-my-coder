@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ModelSelector, type ModelSelectorExtraSection } from "../ModelSelector";
 import type { ModelEntry } from "../../types/modelInfo";
 
@@ -37,6 +37,7 @@ export function ModelReferencePicker({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const label = value || defaultModel || placeholder;
   const extraSections = useMemo<ModelSelectorExtraSection[]>(() => {
     const sections: ModelSelectorExtraSection[] = [];
@@ -66,9 +67,32 @@ export function ModelReferencePicker({
     }
     return sections;
   }, [allowRoles, allowUnset, roleNames]);
+  useEffect(() => {
+    if (!open) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      const root = rootRef.current;
+      const menu = root?.querySelector<HTMLElement>(".omp-model-selector");
+      const scrollHost = root?.closest<HTMLElement>(".omp-settings-content");
+      if (!root || !menu || !scrollHost) return;
+
+      const menuRect = menu.getBoundingClientRect();
+      const hostRect = scrollHost.getBoundingClientRect();
+      const overflowBottom = menuRect.bottom - hostRect.bottom;
+
+      if (overflowBottom > 0) {
+        scrollHost.scrollBy({
+          top: overflowBottom + 16,
+          behavior: "smooth",
+        });
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
 
   return (
-    <div className="omp-settings-model-picker">
+    <div ref={rootRef} className="omp-settings-model-picker">
       <button
         type="button"
         className={`omp-settings-model-picker-btn${value ? " omp-settings-model-picker-btn--set" : ""}`}

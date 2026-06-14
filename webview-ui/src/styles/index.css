@@ -2008,6 +2008,11 @@ body {
   flex: 1;
   padding-right: 8px;
 }
+.omp-diff-content-changed {
+  display: inline-block;
+  padding: 0 1px;
+  border-radius: 3px;
+}
 .omp-diff-add {
   background: rgba(40, 167, 69, 0.12);
 }
@@ -2025,8 +2030,17 @@ body {
 }
 .omp-diff-remove .omp-diff-content {
   color: var(--omp-error);
-  text-decoration: line-through;
-  opacity: 0.7;
+  opacity: 0.85;
+}
+.omp-diff-replace .omp-diff-content {
+  color: var(--vscode-editor-foreground);
+  opacity: 1;
+}
+.omp-diff-remove.omp-diff-replace .omp-diff-content-changed {
+  background: color-mix(in srgb, var(--omp-error) 28%, transparent);
+}
+.omp-diff-add.omp-diff-replace .omp-diff-content-changed {
+  background: color-mix(in srgb, var(--omp-success) 28%, transparent);
 }
 .omp-diff-context {
 }
@@ -3009,7 +3023,7 @@ body {
 /* ── Model selector dropdown ────────────────────────── */
 .omp-model-selector {
   position: absolute;
-  bottom: calc(100% + 8px);
+  top: calc(100% + 8px);
   left: 0;
   width: min(320px, 90vw);
   max-height: 350px;

@@ -19,6 +19,7 @@ webview-ui/main.js
 # Project-local config (personal/machine-specific)
 .kilo/
 .omp/
+.mcp.json
 .vscode/
 AGENTS.md
 tmp/

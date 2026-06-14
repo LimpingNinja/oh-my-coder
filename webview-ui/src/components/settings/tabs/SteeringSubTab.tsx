@@ -34,10 +34,10 @@ export function SteeringSubTab() {
   const [creatingRule, setCreatingRule] = useState(false);
   const [deletingRule, setDeletingRule] = useState<RuleDef | null>(null);
 
-  // Load AGENTS.md on mount
+  // Load AGENTS.md and rules on mount
   useEffect(() => {
     getVSCodeAPI().postMessage({ type: "settings.agentsMd.load" });
-    loadRulesFromDisk();
+    getVSCodeAPI().postMessage({ type: "settings.rules.list" });
 
     function handleMessage(event: MessageEvent) {
       const msg = event.data;
@@ -45,17 +45,13 @@ export function SteeringSubTab() {
         setGlobalAgentsMd(msg.global ?? "");
         setProjectAgentsMd(msg.project ?? "");
         setAgentsMdDirty(false);
+      } else if (msg?.type === "settings.rules.listed") {
+        setRules(msg.rules);
       }
     }
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, []);
-
-  async function loadRulesFromDisk() {
-    // Rules are loaded via the bridge's /settings endpoint as part of settings.loaded
-    // For now we scan from the filesystem via a message round-trip
-    // The rules will be populated from the settings context if available
-  }
 
   const currentAgentsMd = agentsMdScope === "global" ? globalAgentsMd : projectAgentsMd;
   const setCurrentAgentsMd = (value: string) => {
@@ -203,7 +199,6 @@ export function SteeringSubTab() {
               scope: deletingRule.source,
               name: deletingRule.name,
             });
-            setRules(rules.filter((r) => r !== deletingRule));
             setDeletingRule(null);
           }}
         />

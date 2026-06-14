@@ -392,15 +392,29 @@ export function EditResult({ result, filename }: EditResultProps) {
 
 /** Renders a colored diff view with line numbers */
 function DiffView({ diff }: { diff: string }) {
-  const lines = parseDiffLines(diff);
+  const lines = pairReplacementLines(parseDiffLines(diff));
 
   return (
     <div className="omp-diff-view">
       {lines.map((line, i) => (
-        <div key={i} className={`omp-diff-line omp-diff-${line.type}`}>
+        <div
+          key={i}
+          className={`omp-diff-line omp-diff-${line.type}${line.segments ? " omp-diff-replace" : ""}`}
+        >
           <span className="omp-diff-gutter">{line.lineNum || ""}</span>
           <span className="omp-diff-marker">{line.marker}</span>
-          <span className="omp-diff-content">{line.content}</span>
+          <span className="omp-diff-content">
+            {line.segments
+              ? line.segments.map((segment, segmentIndex) => (
+                  <span
+                    key={segmentIndex}
+                    className={segment.changed ? "omp-diff-content-changed" : undefined}
+                  >
+                    {segment.text}
+                  </span>
+                ))
+              : line.content}
+          </span>
         </div>
       ))}
     </div>
@@ -412,6 +426,15 @@ interface DiffLine {
   marker: string;
   lineNum: string;
   content: string;
+}
+
+interface DiffSegment {
+  text: string;
+  changed: boolean;
+}
+
+interface RenderDiffLine extends DiffLine {
+  segments?: DiffSegment[];
 }
 
 function parseDiffLines(diff: string): DiffLine[] {
@@ -444,6 +467,73 @@ function parseDiffLines(diff: string): DiffLine[] {
   }
 
   return result;
+}
+
+function pairReplacementLines(lines: DiffLine[]): RenderDiffLine[] {
+  const paired: RenderDiffLine[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const current = lines[i]!;
+    const next = lines[i + 1];
+    const isReplacementPair =
+      next &&
+      ((current.type === "remove" && next.type === "add") ||
+        (current.type === "add" && next.type === "remove"));
+
+    if (isReplacementPair) {
+      const oldLine = current.type === "remove" ? current : next!;
+      const newLine = current.type === "add" ? current : next!;
+      const [oldSegments, newSegments] = buildChangedSegments(oldLine.content, newLine.content);
+
+      paired.push({ ...current, segments: current.type === "remove" ? oldSegments : newSegments });
+      paired.push({ ...next!, segments: next!.type === "remove" ? oldSegments : newSegments });
+      i++;
+      continue;
+    }
+
+    paired.push(current);
+  }
+
+  return paired;
+}
+
+function buildChangedSegments(oldText: string, newText: string): [DiffSegment[], DiffSegment[]] {
+  let prefix = 0;
+  while (
+    prefix < oldText.length &&
+    prefix < newText.length &&
+    oldText[prefix] === newText[prefix]
+  ) {
+    prefix++;
+  }
+
+  let suffix = 0;
+  while (
+    suffix < oldText.length - prefix &&
+    suffix < newText.length - prefix &&
+    oldText[oldText.length - 1 - suffix] === newText[newText.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+
+  return [
+    splitDiffSegments(oldText, prefix, suffix),
+    splitDiffSegments(newText, prefix, suffix),
+  ];
+}
+
+function splitDiffSegments(text: string, prefix: number, suffix: number): DiffSegment[] {
+  const segments: DiffSegment[] = [];
+  const before = text.slice(0, prefix);
+  const changed = text.slice(prefix, text.length - suffix);
+  const after = suffix > 0 ? text.slice(text.length - suffix) : "";
+
+  if (before) segments.push({ text: before, changed: false });
+  if (changed) segments.push({ text: changed, changed: true });
+  if (after) segments.push({ text: after, changed: false });
+  if (segments.length === 0) segments.push({ text, changed: false });
+
+  return segments;
 }
 
 // ============================================================================

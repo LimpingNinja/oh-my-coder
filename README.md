@@ -14,8 +14,37 @@ A VS Code extension that provides an Activity Bar chat interface for [OMP](https
 ## Requirements
 
 - VS Code 1.110+
-- `omp` binary installed and on PATH (or configured via `omp.path` setting)
+- `omp` installed and on `PATH`
 
+## Quick Start
+
+### 1. Install Bun
+
+Official docs: <https://bun.com/docs/installation>
+
+| OS | Command |
+|---|---|
+| macOS | `brew install oven-sh/bun/bun` |
+| Linux | `curl -fsSL https://bun.com/install \| bash` |
+| Windows (PowerShell) | `powershell -c "irm bun.sh/install.ps1\|iex"` |
+
+### 2. Install OMP
+
+```bash
+bun install -g @oh-my-pi/pi-coding-agent
+```
+
+### 3. Verify the CLI
+
+```bash
+omp --version
+```
+
+### 4. Install the extension
+
+Install **Oh My Coder** from the VS Code Marketplace, or install a packaged VSIX manually.
+
+For fuller macOS, Linux, and Windows setup notes, PATH troubleshooting, and VSIX install steps, see [INSTALL.md](./INSTALL.md).
 ## Development
 
 ```bash
@@ -36,4 +65,4 @@ Run the extension in VS Code using the **Run Extension** launch configuration in
 
 ## License
 
-MIT
+AGPL-3.0-or-later

@@ -7,9 +7,12 @@
     "AI",
     "Chat"
   ],
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LimpingNinja/oh-my-coder.git"
+  },
   "publisher": "omp",
-  "icon": "assets/omc_large_icon_square_transparent.png",
   "type": "module",
   "main": "./dist/extension.cjs",
   "scripts": {
@@ -185,6 +188,7 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "icon": "assets/omc_large_icon_square_transparent.png",
   "engines": {
     "vscode": "^1.110.0"
   },

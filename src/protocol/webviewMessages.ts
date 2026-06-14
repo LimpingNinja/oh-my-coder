@@ -45,7 +45,6 @@ export interface ProviderStatusEntry {
   api?: string | null;
 }
 
-
 /** Attachment alongside a chat message (future: images, files, etc.). */
 export interface ChatAttachment {
   type: "image";
@@ -283,6 +282,7 @@ export type WebviewToExtensionMessage =
       };
     }
   | { type: "settings.rule.delete"; scope: "global" | "project"; name: string }
+  | { type: "settings.rules.list" }
   | { type: "settings.agentsMd.load" }
   | { type: "settings.agentsMd.save"; scope: "global" | "project"; content: string };
 
@@ -436,10 +436,44 @@ export type ExtensionToWebviewMessage =
       }>;
     }
   /** Config saved successfully. */
-  | { type: "settings.updated"; config: Record<string, unknown>; providerStatus?: ProviderStatusEntry[]; skills?: Array<{ name: string; description: string; source: string; location: string; path: string }>; mcpServers?: Array<{ name: string; type: string; status: string; enabled: boolean; source: string; sourcePath: string; config: Record<string, unknown> }> }
+  | {
+      type: "settings.updated";
+      config: Record<string, unknown>;
+      providerStatus?: ProviderStatusEntry[];
+      skills?: Array<{
+        name: string;
+        description: string;
+        source: string;
+        location: string;
+        path: string;
+      }>;
+      mcpServers?: Array<{
+        name: string;
+        type: string;
+        status: string;
+        enabled: boolean;
+        source: string;
+        sourcePath: string;
+        config: Record<string, unknown>;
+      }>;
+    }
   | { type: "settings.omc.loaded"; settings: { path: string } }
   | { type: "settings.omc.updated" }
   | { type: "settings.agentsMd.loaded"; global: string; project: string }
+  | {
+      type: "settings.rules.listed";
+      rules: Array<{
+        name: string;
+        description?: string;
+        globs?: string[];
+        alwaysApply?: boolean;
+        condition?: string[];
+        scope?: string[];
+        interruptMode?: "never" | "prose-only" | "tool-only" | "always";
+        content: string;
+        source: "global" | "project";
+      }>;
+    }
   /** Config save failed. */
   | { type: "settings.updateFailed"; message: string; details?: string }
   /** Navigate webview to settings panel with optional tab. */
@@ -618,6 +652,7 @@ const webviewToExtensionTypes = new Set<string>([
   "settings.provider.delete",
   "settings.rule.write",
   "settings.rule.delete",
+  "settings.rules.list",
   "settings.agentsMd.load",
   "settings.agentsMd.save",
 ]);
@@ -657,4 +692,5 @@ const extensionToWebviewTypes = new Set<string>([
   "settings.omc.loaded",
   "settings.omc.updated",
   "settings.agentsMd.loaded",
+  "settings.rules.listed",
 ]);

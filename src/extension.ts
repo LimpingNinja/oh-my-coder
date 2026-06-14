@@ -179,7 +179,6 @@ let currentModelRole: string = "default";
 let cachedModelRoles: Record<string, string> = {};
 let cachedCycleOrder: string[] = ["smol", "default", "slow"];
 
-
 // Save-in-flight guard: suppresses config watcher pushes during known saves (Rule 7).
 let saveInFlight = false;
 // Pending extension UI requests — buffered for webview delivery and response routing.
@@ -371,12 +370,12 @@ async function deleteAgentDefinition(filePath: string): Promise<void> {
   await fs.unlink(resolveAgentDeletePath(filePath));
 }
 
-
 // ── Custom Provider CRUD ────────────────────────────────────────────────────────
 
 function getModelsYmlPath(): string {
   const configDirName = process.env.PI_CONFIG_DIR || ".omp";
-  const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), configDirName, "agent");
+  const agentDir =
+    process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), configDirName, "agent");
   return path.join(agentDir, "models.yml");
 }
 
@@ -385,7 +384,9 @@ async function readModelsYml(): Promise<Record<string, unknown>> {
   try {
     const raw = await fs.readFile(ymlPath, "utf-8");
     const parsed = parseYaml(raw);
-    return (parsed && typeof parsed === "object") ? parsed as Record<string, unknown> : { providers: {} };
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : { providers: {} };
   } catch {
     return { providers: {} };
   }
@@ -399,16 +400,23 @@ async function writeModelsYml(doc: Record<string, unknown>): Promise<void> {
   await fs.rename(tmpPath, ymlPath);
 }
 
-async function writeCustomProvider(provider: { id: string; baseUrl: string; apiKey?: string; api?: string }): Promise<void> {
+async function writeCustomProvider(provider: {
+  id: string;
+  baseUrl: string;
+  apiKey?: string;
+  api?: string;
+}): Promise<void> {
   if (!provider.id.trim()) throw new Error("Provider ID is required.");
   if (!provider.baseUrl.trim()) throw new Error("Base URL is required.");
   const doc = await readModelsYml();
-  const providers = (doc.providers && typeof doc.providers === "object")
-    ? doc.providers as Record<string, unknown>
-    : {};
-  const existing = (providers[provider.id] && typeof providers[provider.id] === "object")
-    ? providers[provider.id] as Record<string, unknown>
-    : {};
+  const providers =
+    doc.providers && typeof doc.providers === "object"
+      ? (doc.providers as Record<string, unknown>)
+      : {};
+  const existing =
+    providers[provider.id] && typeof providers[provider.id] === "object"
+      ? (providers[provider.id] as Record<string, unknown>)
+      : {};
   existing.baseUrl = provider.baseUrl.trim();
   if (provider.apiKey?.trim()) {
     existing.apiKey = provider.apiKey.trim();
@@ -428,15 +436,16 @@ async function writeCustomProvider(provider: { id: string; baseUrl: string; apiK
 async function deleteCustomProvider(providerId: string): Promise<void> {
   if (!providerId.trim()) throw new Error("Provider ID is required.");
   const doc = await readModelsYml();
-  const providers = (doc.providers && typeof doc.providers === "object")
-    ? doc.providers as Record<string, unknown>
-    : {};
-  if (!(providerId in providers)) throw new Error(`Provider "${providerId}" not found in models.yml.`);
+  const providers =
+    doc.providers && typeof doc.providers === "object"
+      ? (doc.providers as Record<string, unknown>)
+      : {};
+  if (!(providerId in providers))
+    throw new Error(`Provider "${providerId}" not found in models.yml.`);
   delete providers[providerId];
   doc.providers = providers;
   await writeModelsYml(doc);
 }
-
 
 // ── Rule CRUD ────────────────────────────────────────────────────────────────────
 
@@ -498,6 +507,85 @@ async function deleteRuleDefinition(scope: "global" | "project", name: string): 
   await fs.unlink(target);
 }
 
+export interface DiscoveredRule {
+  name: string;
+  description?: string;
+  globs?: string[];
+  alwaysApply?: boolean;
+  condition?: string[];
+  scope?: string[];
+  interruptMode?: "never" | "prose-only" | "tool-only" | "always";
+  content: string;
+  source: "global" | "project";
+}
+
+const INTERRUPT_MODES = new Set(["never", "prose-only", "tool-only", "always"]);
+
+export async function readRulesList(): Promise<DiscoveredRule[]> {
+  const rules: DiscoveredRule[] = [];
+  async function readDir(dir: string, source: "global" | "project"): Promise<void> {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.endsWith(".md")) continue;
+      const filePath = path.join(dir, entry);
+      let raw: string;
+      try {
+        raw = await fs.readFile(filePath, "utf-8");
+      } catch {
+        continue;
+      }
+      const name = entry.replace(/\.md$/, "");
+      let content = raw;
+      let fm: Record<string, unknown> | undefined;
+      const openFence = raw.indexOf("---\n");
+      if (openFence === 0) {
+        const closeFence = raw.indexOf("\n---\n", 3);
+        if (closeFence !== -1) {
+          const yamlText = raw.slice(3, closeFence);
+          content = raw.slice(closeFence + 5);
+          try {
+            fm = parseYaml(yamlText) as Record<string, unknown>;
+          } catch {
+            fm = undefined;
+            content = raw;
+          }
+        } else {
+          content = raw.slice(4);
+        }
+      }
+      const rule: DiscoveredRule = { name, content: content.trimEnd(), source };
+      if (fm) {
+        if (typeof fm.description === "string") rule.description = fm.description;
+        if (Array.isArray(fm.globs) && fm.globs.every((g: unknown) => typeof g === "string"))
+          rule.globs = fm.globs as string[];
+        if (typeof fm.alwaysApply === "boolean") rule.alwaysApply = fm.alwaysApply;
+        if (
+          Array.isArray(fm.condition) &&
+          fm.condition.every((c: unknown) => typeof c === "string")
+        )
+          rule.condition = fm.condition as string[];
+        if (Array.isArray(fm.scope) && fm.scope.every((s: unknown) => typeof s === "string"))
+          rule.scope = fm.scope as string[];
+        if (typeof fm.interruptMode === "string" && INTERRUPT_MODES.has(fm.interruptMode))
+          rule.interruptMode = fm.interruptMode as DiscoveredRule["interruptMode"];
+      }
+      rules.push(rule);
+    }
+  }
+  await readDir(getGlobalRulesDir(), "global");
+  try {
+    await readDir(getProjectRulesDir(), "project");
+  } catch {
+    // no workspace open — project list is empty
+  }
+  return rules;
+}
+
 // ── AGENTS.md CRUD ───────────────────────────────────────────────────────────────
 
 function getGlobalAgentsMdPath(): string {
@@ -516,8 +604,12 @@ function getProjectAgentsMdPath(): string {
 async function readAgentsMd(): Promise<{ global: string; project: string }> {
   let globalContent = "";
   let projectContent = "";
-  try { globalContent = await fs.readFile(getGlobalAgentsMdPath(), "utf-8"); } catch {}
-  try { projectContent = await fs.readFile(getProjectAgentsMdPath(), "utf-8"); } catch {}
+  try {
+    globalContent = await fs.readFile(getGlobalAgentsMdPath(), "utf-8");
+  } catch {}
+  try {
+    projectContent = await fs.readFile(getProjectAgentsMdPath(), "utf-8");
+  } catch {}
   return { global: globalContent, project: projectContent };
 }
 
@@ -526,7 +618,6 @@ async function writeAgentsMd(scope: "global" | "project", content: string): Prom
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, content, "utf-8");
 }
-
 
 // ── Skill CRUD ─────────────────────────────────────────────────────────────────
 
@@ -558,7 +649,8 @@ function skillMarkdown(skill: EditableSkillPayload): string {
   };
   if (skill.globs && skill.globs.length > 0) frontmatter.globs = skill.globs;
   if (skill.alwaysApply) frontmatter.alwaysApply = true;
-  if (skill.allowedTools && skill.allowedTools.length > 0) frontmatter["allowed-tools"] = skill.allowedTools;
+  if (skill.allowedTools && skill.allowedTools.length > 0)
+    frontmatter["allowed-tools"] = skill.allowedTools;
   const yaml = stringifyYaml(frontmatter).trimEnd();
   return `---\n${yaml}\n---\n${skill.content.trimEnd()}\n`;
 }
@@ -661,10 +753,7 @@ async function writeMcpServer(
   return filePath;
 }
 
-async function deleteMcpServer(
-  scope: "global" | "project",
-  name: string,
-): Promise<string> {
+async function deleteMcpServer(scope: "global" | "project", name: string): Promise<string> {
   if (!name.trim()) throw new Error("Server name is required.");
   const filePath = getMcpConfigPath(scope);
   const config = await readMcpConfig(filePath);
@@ -699,7 +788,6 @@ async function resolveStartupModelDefaults(
 
   return { model, thinking };
 }
-
 
 const SETTINGS_PANEL_RUNTIME_KEYS = [
   "ask.notify",
@@ -874,7 +962,9 @@ async function callReverseBridge(path: string, body?: unknown): Promise<unknown>
   }
 }
 
-async function getSettingsPanelConfig(rawConfig: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function getSettingsPanelConfig(
+  rawConfig: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   const runtimeSettings = await callReverseBridge("/get-settings", {
     keys: SETTINGS_PANEL_RUNTIME_KEYS,
   });
@@ -1443,9 +1533,12 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
 
           // Refresh UI state and push footer with known values
           const savedPatch = message.config as Record<string, unknown>;
-          if (typeof savedPatch.steeringMode === "string") currentSteeringMode = savedPatch.steeringMode;
-          if (typeof savedPatch.followUpMode === "string") currentFollowUpMode = savedPatch.followUpMode;
-          if (typeof savedPatch.interruptMode === "string") currentInterruptMode = savedPatch.interruptMode;
+          if (typeof savedPatch.steeringMode === "string")
+            currentSteeringMode = savedPatch.steeringMode;
+          if (typeof savedPatch.followUpMode === "string")
+            currentFollowUpMode = savedPatch.followUpMode;
+          if (typeof savedPatch.interruptMode === "string")
+            currentInterruptMode = savedPatch.interruptMode;
           pushFooterState();
 
           if (rpcController?.isRunning()) {
@@ -1463,8 +1556,20 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
           const providerStatus = await fetchProviderStatusFromReverseBridge();
           const skills = await fetchSkillsFromReverseBridge();
           const mcpServers = await fetchMcpServersFromReverseBridge();
-          postToWebview({ type: "settings.updated", config: settingsConfig, providerStatus, skills, mcpServers });
-          SettingsEditorProvider.postMessage({ type: "settings.updated", config: settingsConfig, providerStatus, skills, mcpServers });
+          postToWebview({
+            type: "settings.updated",
+            config: settingsConfig,
+            providerStatus,
+            skills,
+            mcpServers,
+          });
+          SettingsEditorProvider.postMessage({
+            type: "settings.updated",
+            config: settingsConfig,
+            providerStatus,
+            skills,
+            mcpServers,
+          });
           postToWebview({
             type: "display.settings",
             hideThinkingBlock: !!updated.raw.hideThinkingBlock,
@@ -1689,7 +1794,6 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
       })();
       break;
 
-
     case "settings.mcp.reload":
       outputChannel.appendLine("[omp] settings.mcp.reload");
       void (async () => {
@@ -1804,6 +1908,12 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
           };
           postToWebview(payload);
           SettingsEditorProvider.postMessage(payload);
+          const rulesPayload = {
+            type: "settings.rules.listed" as const,
+            rules: await readRulesList(),
+          };
+          postToWebview(rulesPayload);
+          SettingsEditorProvider.postMessage(rulesPayload);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           postToWebview({ type: "settings.updateFailed", message: msg });
@@ -1835,10 +1945,31 @@ function handleWebviewMessage(message: WebviewToExtensionMessage): void {
           };
           postToWebview(payload);
           SettingsEditorProvider.postMessage(payload);
+          const rulesPayload = {
+            type: "settings.rules.listed" as const,
+            rules: await readRulesList(),
+          };
+          postToWebview(rulesPayload);
+          SettingsEditorProvider.postMessage(rulesPayload);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           postToWebview({ type: "settings.updateFailed", message: msg });
           SettingsEditorProvider.postMessage({ type: "settings.updateFailed", message: msg });
+        }
+      })();
+      break;
+
+    case "settings.rules.list":
+      outputChannel.appendLine("[omp] settings.rules.list");
+      void (async () => {
+        try {
+          const rules = await readRulesList();
+          const payload = { type: "settings.rules.listed" as const, rules };
+          postToWebview(payload);
+          SettingsEditorProvider.postMessage(payload);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          outputChannel.appendLine(`[omp] rules.list error: ${msg}`);
         }
       })();
       break;
